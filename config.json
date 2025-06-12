@@ -1,0 +1,206 @@
+{
+  "eikon_api_key": "1475940198b04fdab9265b7892546cc2ead9eda6",
+  
+  "metals_rics": {
+    "Copper": "CMCU3",
+    "Aluminium": "CMAL3", 
+    "Zinc": "CMZN3",
+    "Lead": "CMPB3",
+    "Nickel": "CMNI3",
+    "Tin": "CMSN3"
+  },
+  
+  "forward_curve_rics": {
+    "Copper": {
+      "cash": "LMCAD00",
+      "1m": "CMCU1",
+      "3m": "CMCU3",
+      "15m": "CMCU15",
+      "27m": "CMCU27"
+    },
+    "Aluminium": {
+      "cash": "LMAHD00", 
+      "1m": "CMAL1",
+      "3m": "CMAL3",
+      "15m": "CMAL15",
+      "27m": "CMAL27"
+    },
+    "Zinc": {
+      "cash": "LMZSD00",
+      "1m": "CMZN1", 
+      "3m": "CMZN3",
+      "15m": "CMZN15",
+      "27m": "CMZN27"
+    },
+    "Lead": {
+      "cash": "LMPBD00",
+      "1m": "CMPB1",
+      "3m": "CMPB3", 
+      "15m": "CMPB15",
+      "27m": "CMPB27"
+    },
+    "Nickel": {
+      "cash": "LMNID00",
+      "1m": "CMNI1",
+      "3m": "CMNI3",
+      "15m": "CMNI15", 
+      "27m": "CMNI27"
+    },
+    "Tin": {
+      "cash": "LMSND00",
+      "1m": "CMSN1",
+      "3m": "CMSN3",
+      "15m": "CMSN15",
+      "27m": "CMSN27"
+    }
+  },
+  
+  "alternative_metals_rics": {
+    "Copper": ["CU3M", "0#LME-CU:", "LMCAD03"],
+    "Aluminium": ["AL3M", "0#LME-AL:", "LMAHD03"],
+    "Zinc": ["ZN3M", "0#LME-ZN:", "LMZSD03"],
+    "Lead": ["PB3M", "0#LME-PB:", "LMPBD03"],
+    "Nickel": ["NI3M", "0#LME-NI:", "LMNID03"],
+    "Tin": ["SN3M", "0#LME-SN:", "LMSND03"]
+  },
+  
+  "lme_inventory_rics": {
+    "Copper": "MCUSTX-TOTAL",
+    "Aluminium": "MALSTX-TOTAL",
+    "Zinc": "MZNSTX-TOTAL",
+    "Lead": "MPBSTX-TOTAL",
+    "Nickel": "MNISTX-TOTAL",
+    "Tin": "MSNSTX-TOTAL"
+  },
+  
+  "comex_copper_ric": "HG-STX-COMEX",
+  
+  "shfe_inventory_rics": {
+    "Copper": "CU-STX-SGH",
+    "Aluminium": "AL-STX-SGH",
+    "Zinc": "ZN-STX-SGH",
+    "Lead": "PB-STX-SGH",
+    "Nickel": "NI-STX-SGH",
+    "Tin": "SN-STX-SGH"
+  },
+  
+  "smm_inventory_rics": {
+    "Copper": "SMM-CUR-BON",
+    "Aluminium": "SMM-ALU-BON",
+    "Zinc": "SMM-ZIN-BON"
+  },
+  
+  "macro_rics": {
+    "USD_INDEX": ".DXY",
+    "US_10Y_YIELD": "TNX",
+    "WTI_CRUDE": "CLc1",
+    "CHINA_PMI": "CNPMIM=ECI",
+    "CHINA_CPI": "CNCPIY=ECI",
+    "CHINA_GDP": "CNGDPY=ECI",
+    "CHINA_IND_PROD": "CNIPY=ECI",
+    "COPPER_GOLD_RATIO": "XCU/XAU=",
+    "VIX": ".VIX"
+  },
+
+  "equity_indices": {
+    "S&P_500_FUTURES": "ESc1",
+    "NASDAQ": ".IXIC",
+    "DOW": ".INDU", 
+    "NIKKEI_FUTURES": "NKc1",
+    "HANG_SENG": ".HSI",
+    "FTSE_100": ".FTSE",
+    "DAX": ".GDAXI",
+    "CAC": ".FCHI",
+    "MSCI_WORLD": ".MIWD00000PUS",
+    "MSCI_EM": ".MSCIEF"
+  },
+  
+  "usdjpy_swap_rates": {
+    "USD_2Y_IRS": "USDIRSS2Y=",
+    "JPY_1Y_DEPOSIT": "JPY1YD=",
+    "USD_1Y_DEPOSIT": "USD1YD=",
+    "USD_2Y_DEPOSIT": "USD2YD="
+  },
+
+  "risk_sentiment_indicators": {
+    "VIX_VOLATILITY": ".VIX",
+    "GOLD_PRICE": "GCc1",
+    "USD_JPY": "JPY=",
+    "US_2Y_10Y_SPREAD": "US2US10=TWEB",
+    "CREDIT_SPREAD": "CDX5YIGS=MP",
+    "COPPER_GOLD_RATIO": "XCU/XAU=",
+    "HIGH_YIELD_BONDS": "HYG",
+    "EMERGING_MARKETS": ".MSCIEF"
+  },
+  
+  "news_settings": {
+    "enable_news_collection": true,
+    "comprehensive_mode": true,
+    "include_news_body": true,
+    "minimum_priority_score": 5,
+    "excluded_sources": ["MARKETWATCH", "SEEKING_ALPHA", "SPAM_SOURCE", "SOCIAL_MEDIA"],
+    "priority_keywords": [
+      "mine", "smelter", "inventory", "trade", "china", "strike", "disruption",
+      "shortage", "supply cut", "production", "demand", "tariff", "sanction",
+      "force majeure", "mine closure", "refinery shutdown", "export ban"
+    ],
+    "high_priority_keywords": [
+      "strike", "shutdown", "disruption", "mine closure", "supply cut",
+      "trade war", "tariff", "sanction", "inventory surge", "shortage",
+      "force majeure", "production halt", "emergency", "crisis"
+    ],
+    "medium_priority_keywords": [
+      "price", "production", "demand", "export", "import", "inventory",
+      "stockpile", "smelter", "refinery", "china", "lme", "forecast",
+      "outlook", "guidance", "earnings", "results"
+    ],
+    "reliable_sources": ["REUTERS", "BLOOMBERG", "FASTMARKETS", "METAL BULLETIN", "S&P GLOBAL", "PLATTS"],
+    "language_preferences": ["en"],
+    "enable_general_market_news": true,
+    "enable_priority_scoring": true,
+    "enable_duplicate_filtering": true,
+    "api_rate_limit_delay": 0.3,
+    "max_news_per_query": 15,
+    "max_queries_per_metal": 3
+  },
+  
+  "output_settings": {
+    "output_directory": "output",
+    "log_directory": "logs",
+    "filename_format": "LME_Daily_Report_Input_{date}.txt",
+    "date_format": "%Y%m%d",
+    "encoding": "utf-8"
+  },
+  
+  "error_handling": {
+    "max_retries": 3,
+    "retry_delay_seconds": 5,
+    "timeout_seconds": 30,
+    "fallback_mode": true
+  },
+  
+  "market_holidays": [
+    "2025-01-01",
+    "2025-12-25",
+    "2025-12-26"
+  ],
+  
+  "timezones": {
+    "london": "Europe/London",
+    "new_york": "America/New_York",
+    "shanghai": "Asia/Shanghai"
+  },
+  
+  "alert_thresholds": {
+    "price_change_threshold": 5.0,
+    "inventory_change_threshold": 10.0,
+    "volume_anomaly_threshold": 2.0
+  },
+  
+  "report_template": {
+    "language": "japanese",
+    "target_words": 1000,
+    "include_charts": false,
+    "professional_tone": true
+  }
+}
