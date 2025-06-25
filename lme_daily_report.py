@@ -423,52 +423,129 @@ class LMEReportGenerator:
             self.logger.debug(f"在庫トレンド分析エラー ({ric}): {e}")
             return {}
     
-    def _get_volume_trend(self, ric: str) -> Dict:
-        """取引量の5営業日トレンド分析"""
+    def _get_volume_trend(self, ric: str, current_volume: float = None) -> Dict:
+        """取引量の5営業日トレンド分析（3段階フォールバック方式で各日の3M先物出来高を取得）"""
         try:
             from datetime import datetime, timedelta
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=10)  # 余裕をもって10日前から
+            import pandas as pd
             
-            ts_data = ek.get_timeseries(
-                ric,
-                start_date=start_date.strftime('%Y-%m-%d'),
-                end_date=end_date.strftime('%Y-%m-%d'),
-                fields=['VOLUME']
-            )
+            # 前営業日を基準とした過去5営業日を特定
+            previous_business_day = self._get_previous_business_day()
+            business_days = []
+            current_date = previous_business_day
             
-            if ts_data is not None and not ts_data.empty and 'VOLUME' in ts_data.columns:
-                # 最新から過去5営業日のデータを取得
-                recent_data = ts_data.tail(5)
+            # 過去5営業日を計算（前営業日含む）
+            for i in range(5):
+                business_days.append(current_date)
+                # 前の営業日を計算
+                days_back = 1
+                while days_back <= 7:
+                    candidate = current_date - timedelta(days=days_back)
+                    if candidate.weekday() < 5:  # 平日
+                        current_date = candidate
+                        break
+                    days_back += 1
+            
+            # 各営業日の出来高を個別取得（前営業日と同じ3段階フォールバック方式）
+            historical_volumes = []
+            
+            for date in reversed(business_days):  # 古い順に並べ替え
+                target_date_str = date.strftime('%Y-%m-%d')
+                volume = None
                 
-                if len(recent_data) >= 2 and not recent_data['VOLUME'].isna().all():
-                    # 取引量変動分析
-                    volume_data = recent_data['VOLUME'].dropna()
+                try:
+                    # 方法1: 前営業日のみのデータを取得（3M先物の正確な出来高）
+                    ts_data = ek.get_timeseries(
+                        ric,
+                        start_date=target_date_str,
+                        end_date=target_date_str,
+                        interval='daily',
+                        fields=['VOLUME']
+                    )
                     
-                    if len(volume_data) >= 2:
-                        latest_volume = volume_data.iloc[-1]
-                        avg_volume = volume_data.mean()
-                        
-                        # 最新値と平均の比較
-                        vs_average = ((latest_volume - avg_volume) / avg_volume * 100) if avg_volume != 0 else 0
-                        
-                        # トレンド判定
-                        if abs(vs_average) < 10:  # 10%未満は普通
-                            activity_level = "普通"
-                        elif vs_average > 20:
-                            activity_level = "高"
-                        elif vs_average < -20:
-                            activity_level = "低"
-                        else:
-                            activity_level = "やや高" if vs_average > 0 else "やや低"
-                        
-                        return {
-                            'avg_volume': round(avg_volume, 0) if not pd.isna(avg_volume) else None,
-                            'latest_volume': round(latest_volume, 0) if not pd.isna(latest_volume) else None,
-                            'vs_average_pct': round(vs_average, 1) if not pd.isna(vs_average) else None,
-                            'activity_level': activity_level,
-                            'data_points': len(volume_data)
-                        }
+                    if ts_data is not None and not ts_data.empty and 'VOLUME' in ts_data.columns:
+                        raw_volume = ts_data['VOLUME'].iloc[0]
+                        volume = raw_volume
+                        self.logger.debug(f"{ric} 3M先物出来高（{target_date_str}）: {volume:.0f}")
+                    else:
+                        # 方法2: 範囲指定で確実に取得
+                        start_date = date - timedelta(days=3)
+                        ts_data2 = ek.get_timeseries(
+                            ric,
+                            start_date=start_date.strftime('%Y-%m-%d'),
+                            end_date=target_date_str,
+                            fields=['VOLUME']
+                        )
+                        if ts_data2 is not None and not ts_data2.empty and 'VOLUME' in ts_data2.columns:
+                            # 対象日のデータを取得
+                            target_data = ts_data2[ts_data2.index.date == date.date()]
+                            if not target_data.empty:
+                                raw_volume = target_data['VOLUME'].iloc[0]
+                                volume = raw_volume
+                                self.logger.debug(f"{ric} 3M先物出来高（範囲取得 {target_date_str}）: {volume:.0f}")
+                    
+                    # 方法3: どちらも失敗した場合のフォールバック
+                    if volume is None:
+                        self.logger.warning(f"{ric} {target_date_str} get_timeseriesでデータ取得失敗、get_dataでフォールバック試行")
+                        df2, err2 = ek.get_data(ric, ['ACVOL_UNS', 'ACVOL_1'])
+                        if err2:
+                            self.logger.warning(f"{ric} {target_date_str} get_dataフォールバック警告: {err2}")
+                        if not df2.empty:
+                            # ACVOL_UNSを優先
+                            for field in ['ACVOL_UNS', 'ACVOL_1']:
+                                if field in df2.columns:
+                                    val = df2[field].iloc[0]
+                                    if val is not None and not pd.isna(val):
+                                        volume = val
+                                        self.logger.debug(f"{ric} 3M先物出来高（get_data {field} フォールバック {target_date_str}）: {volume:.0f}")
+                                        break
+                    
+                    if volume is not None and not pd.isna(volume):
+                        historical_volumes.append(volume)
+                    
+                except Exception as e:
+                    self.logger.warning(f"{ric} {target_date_str} 出来高取得エラー: {e}")
+            
+            # トレンド分析
+            if len(historical_volumes) >= 2:
+                # 現在の出来高を使用、なければ最新データ
+                if current_volume is not None:
+                    latest_volume = current_volume
+                    # 現在値以外の過去データで平均を計算
+                    if len(historical_volumes) > 1:
+                        historical_data = historical_volumes[:-1]  # 最新日を除く
+                        avg_volume = sum(historical_data) / len(historical_data)
+                    else:
+                        avg_volume = historical_volumes[0]
+                else:
+                    latest_volume = historical_volumes[-1]
+                    # 最新値以外の過去データで平均を計算
+                    if len(historical_volumes) > 1:
+                        historical_data = historical_volumes[:-1]  # 最新日を除く
+                        avg_volume = sum(historical_data) / len(historical_data)
+                    else:
+                        avg_volume = historical_volumes[0]
+                
+                # 最新値と過去平均の比較
+                vs_average = ((latest_volume - avg_volume) / avg_volume * 100) if avg_volume != 0 else 0
+                
+                # トレンド判定
+                if abs(vs_average) < 10:  # 10%未満は普通
+                    activity_level = "普通"
+                elif vs_average > 20:
+                    activity_level = "高"
+                elif vs_average < -20:
+                    activity_level = "低"
+                else:
+                    activity_level = "やや高" if vs_average > 0 else "やや低"
+                
+                return {
+                    'avg_volume': round(avg_volume, 0) if avg_volume else None,
+                    'latest_volume': round(latest_volume, 0) if latest_volume else None,
+                    'vs_average_pct': round(vs_average, 1),
+                    'activity_level': activity_level,
+                    'data_points': len(historical_volumes)
+                }
                         
             return {}
             
@@ -703,43 +780,91 @@ class LMEReportGenerator:
         try:
             for metal_name, ric in self.metals_rics.items():
                 try:
-                    fields = [
-                        'VOL',             # 出来高(代替)
-                        'ACVOL_1',         # 累積出来高
-                        'CF_VOLUME',       # 出来高(代替2)
-                        'TURNOVER'         # 売買代金
-                    ]
+                    # get_timeseriesで前営業日の出来高を取得（3ヶ月先物の正しい出来高）
+                    from datetime import datetime, timedelta
+                    previous_business_day = self._get_previous_business_day()
+                    target_date_str = previous_business_day.strftime('%Y-%m-%d')
                     
+                    volume = None
+                    try:
+                        # 方法1: 前営業日のみのデータを取得（3M先物の正確な出来高）
+                        ts_data = ek.get_timeseries(
+                            ric,
+                            start_date=target_date_str,
+                            end_date=target_date_str,
+                            interval='daily',
+                            fields=['VOLUME']
+                        )
+                        
+                        if ts_data is not None and not ts_data.empty and 'VOLUME' in ts_data.columns:
+                            volume = ts_data['VOLUME'].iloc[0]
+                            self.logger.info(f"{metal_name} 3M先物出来高（前営業日 {target_date_str}）: {volume}")
+                        else:
+                            # 方法2: 範囲指定で前営業日のデータを確実に取得
+                            start_date = previous_business_day - timedelta(days=3)
+                            ts_data2 = ek.get_timeseries(
+                                ric,
+                                start_date=start_date.strftime('%Y-%m-%d'),
+                                end_date=target_date_str,
+                                fields=['VOLUME']
+                            )
+                            if ts_data2 is not None and not ts_data2.empty and 'VOLUME' in ts_data2.columns:
+                                # 前営業日のデータを取得
+                                target_data = ts_data2[ts_data2.index.date == previous_business_day.date()]
+                                if not target_data.empty:
+                                    volume = target_data['VOLUME'].iloc[0]
+                                    self.logger.info(f"{metal_name} 3M先物出来高（範囲取得 {target_date_str}）: {volume}")
+                        
+                        # 方法3: どちらも失敗した場合のフォールバック
+                        if volume is None:
+                            self.logger.warning(f"{metal_name} get_timeseriesでデータ取得失敗、get_dataでフォールバック試行")
+                            df2, err2 = ek.get_data(ric, ['ACVOL_UNS', 'ACVOL_1'])
+                            if err2:
+                                self.logger.warning(f"{metal_name} get_dataフォールバック警告: {err2}")
+                            if not df2.empty:
+                                # ACVOL_UNSを優先（これは累積出来高で、より正確）
+                                for field in ['ACVOL_UNS', 'ACVOL_1']:
+                                    if field in df2.columns:
+                                        val = df2[field].iloc[0]
+                                        if val is not None and not pd.isna(val):
+                                            volume = val
+                                            self.logger.info(f"{metal_name} 3M先物出来高（get_data {field} フォールバック）: {volume:.0f}")
+                                            break
+                    except Exception as e:
+                        self.logger.warning(f"{metal_name} 3M先物出来高取得エラー: {e}")
+                        # 最終フォールバック
+                        try:
+                            df_final, err_final = ek.get_data(ric, ['ACVOL_UNS'])
+                            if not df_final.empty and 'ACVOL_UNS' in df_final.columns:
+                                val = df_final['ACVOL_UNS'].iloc[0]
+                                if val is not None and not pd.isna(val):
+                                    volume = val
+                                    self.logger.info(f"{metal_name} 3M先物出来高（最終フォールバック）: {volume:.0f}")
+                        except:
+                            pass
+                    
+                    # 売買代金は従来通りget_dataで取得
+                    fields = ['TURNOVER']
                     df, err = ek.get_data(ric, fields)
                     if err:
-                        self.logger.warning(f"{metal_name} 取引量データ警告: {err}")
+                        self.logger.warning(f"{metal_name} 売買代金データ警告: {err}")
                     
-                    if not df.empty:
-                        # 出来高の取得
-                        volume = None
-                        for field in ['VOL', 'ACVOL_1', 'CF_VOLUME']:
-                            if field in df.columns:
-                                value = df[field].iloc[0]
-                                if value is not None and not pd.isna(value):
-                                    volume = value
-                                    break
-                        
-                        # 売買代金の取得
-                        turnover = None
-                        if 'TURNOVER' in df.columns:
-                            value = df['TURNOVER'].iloc[0]
-                            if value is not None and not pd.isna(value):
-                                turnover = value
-                        
-                        # 取引量トレンド分析
-                        volume_trend = self._get_volume_trend(ric)
-                        
-                        volume_data[metal_name] = {
-                            'volume': volume,
-                            'open_interest': None,  # このデータは利用できない場合が多い
-                            'turnover': turnover,
-                            'trend': volume_trend
-                        }
+                    # 売買代金の取得
+                    turnover = None
+                    if not df.empty and 'TURNOVER' in df.columns:
+                        value = df['TURNOVER'].iloc[0]
+                        if value is not None and not pd.isna(value):
+                            turnover = value
+                    
+                    # 取引量トレンド分析（前営業日の出来高を渡す）
+                    volume_trend = self._get_volume_trend(ric, current_volume=volume)
+                    
+                    volume_data[metal_name] = {
+                        'volume': volume,
+                        'open_interest': None,  # このデータは利用できない場合が多い
+                        'turnover': turnover,
+                        'trend': volume_trend
+                    }
                         
                 except Exception as e:
                     self.logger.error(f"{metal_name} 取引量データエラー: {e}")
@@ -1515,9 +1640,9 @@ class LMEReportGenerator:
             self.logger.info("ニュースデータ取得完了（フォールバック）")
             return news_data
         
-        # 前営業日を取得
-        previous_business_day = self._get_previous_business_day()
-        self.logger.info(f"前営業日: {previous_business_day.strftime('%Y-%m-%d')}")
+        # 実行日を取得（暦ベース）
+        today = datetime.now()
+        self.logger.info(f"実行日: {today.strftime('%Y-%m-%d')}")
         
         excluded_sources = news_settings.get("excluded_sources", [])
         enable_general_news = news_settings.get("enable_general_market_news", True)
@@ -1537,7 +1662,7 @@ class LMEReportGenerator:
             if enable_general_news:
                 self.logger.info("一般市場ニュース取得開始")
                 general_news = self._get_comprehensive_news_data(
-                    "general market", previous_business_day, excluded_sources
+                    "general market", today, excluded_sources
                 )
                 news_stats['successful_queries'] += 1
                 
@@ -1552,7 +1677,7 @@ class LMEReportGenerator:
             # 中国経済関連ニュースを取得
             self.logger.info("中国経済ニュース取得開始")
             china_news = self._get_comprehensive_news_data(
-                "china economy", previous_business_day, excluded_sources
+                "china economy", today, excluded_sources
             )
             news_stats['successful_queries'] += 1
             
@@ -1569,7 +1694,7 @@ class LMEReportGenerator:
                 try:
                     self.logger.info(f"{metal_name} ニュース取得開始")
                     metal_news = self._get_comprehensive_news_data(
-                        metal_name, previous_business_day, excluded_sources
+                        metal_name, today, excluded_sources
                     )
                     news_stats['successful_queries'] += 1
                     
@@ -1599,24 +1724,29 @@ class LMEReportGenerator:
         return news_data
     
     def _get_comprehensive_news_data(self, metal_keyword: str, target_date: datetime, excluded_sources: List[str]) -> List[Dict]:
-        """包括的ニュース取得（直近3営業日のニュースのみを取得）"""
+        """包括的ニュース取得（実行日を含む直近3営業日のニュースを取得）"""
         all_news = []
         
-        # 3営業日前の日付を計算
-        business_days_back = 0
-        check_date = target_date
+        # 実行日を含む直近3営業日の期間を計算
+        business_days_collected = 0
+        check_date = target_date  # 実行日から開始
+        start_date = target_date
         
-        while business_days_back < 3:
-            check_date = check_date - timedelta(days=1)
+        # 実行日から過去に向かって3営業日分の期間を決定
+        while business_days_collected < 3:
             # 土曜日(5)と日曜日(6)を除外
             if check_date.weekday() < 5:  # 月曜日(0)〜金曜日(4)
-                business_days_back += 1
+                business_days_collected += 1
+                if business_days_collected == 1:
+                    start_date = check_date  # 最初の営業日（実行日）
+            if business_days_collected < 3:
+                check_date = check_date - timedelta(days=1)
         
-        # 日付範囲設定: 3営業日前から当日まで
+        # 日付範囲設定: 3営業日前の営業日から実行日まで
         date_from_str = check_date.strftime('%Y-%m-%d')
-        date_to_str = target_date.strftime('%Y-%m-%d')
+        date_to_str = target_date.strftime('%Y-%m-%d')  # target_dateは実行日
         
-        self.logger.info(f"ニュース取得期間: {date_from_str} から {date_to_str} (直近3営業日)")
+        self.logger.info(f"ニュース取得期間: {date_from_str} から {date_to_str} (実行日含む直近3営業日)")
         
         # 効率的な検索クエリを作成（成功率の高いものを優先）
         if metal_keyword.lower() == "general market":
@@ -1713,9 +1843,9 @@ class LMEReportGenerator:
                                     else:
                                         news_date = datetime.strptime(news_date_str[:10], '%Y-%m-%d')
                                     
-                                    # 3営業日前の日付より古い場合はスキップ
-                                    if news_date.date() < check_date.date():
-                                        self.logger.debug(f"古いニュースをスキップ: {news_date.date()} < {check_date.date()}")
+                                    # 期間外のニュースをスキップ（3営業日前より古い、または実行日より新しい）
+                                    if news_date.date() < check_date.date() or news_date.date() > target_date.date():
+                                        self.logger.debug(f"期間外ニュースをスキップ: {news_date.date()} (期間: {check_date.date()} - {target_date.date()})")
                                         continue
                                         
                                 except Exception as date_parse_error:

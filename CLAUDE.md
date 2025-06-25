@@ -1,131 +1,194 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+このファイルは、Claude Code (claude.ai/code) がこのリポジトリで作業する際のガイダンスを提供します。
 
 ## 開発コマンド
 
-### アプリケーションの実行
+### LME日次レポートシステム
 ```bash
-# Linux/macOS
-./run_report.sh
-
-# Windows
-run_report.bat
-
-# Python直接実行
+# メインレポート生成システム
 python lme_daily_report.py
+
+# クロスプラットフォーム実行
+./run_report.sh          # Linux/macOS
+run_report.bat           # Windows
+```
+
+### 銅スプレッドアナライザーシステム
+```bash
+# 対話型スプレッド分析システム（推奨）
+python CopperSpreadAnalyzer/copper_spread_jst_minute.py
+
+# 非対話型バッチ処理
+python CopperSpreadAnalyzer/run_historical_batch.py --date 2025-06-18
+python CopperSpreadAnalyzer/run_historical_batch.py --recent 5
+
+# 月次レポート生成
+python CopperSpreadAnalyzer/generate_monthly_report.py
 ```
 
 ### 環境設定
 ```bash
 # 仮想環境作成
 python3 -m venv venv
-
-# 仮想環境有効化 (Linux/macOS)
-source venv/bin/activate
-
-# 仮想環境有効化 (Windows)
-venv\Scripts\activate
+source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate     # Windows
 
 # 依存関係インストール
 pip install -r requirements.txt
+
+# EIKON API接続確認
+python -c "import eikon as ek; ek.set_app_key('test'); print('EIKON API available')"
 ```
 
-### テスト・検証
+### テスト実行
 ```bash
-# EIKON APIアクセス確認
-python -c "import eikon as ek; ek.set_app_key('test'); print('EIKON API available')"
+# LME日次レポートテスト
+python -c "from lme_daily_report import LMEReportGenerator; gen = LMEReportGenerator(); print(gen.get_price_data())"
 
-# 設定ファイル検証
-python -c "import json; print(json.load(open('config.json')))"
+# 銅スプレッドアナライザーテスト
+cd CopperSpreadAnalyzer
+python test_single_ric.py
+python test_all_spreads_24m.py            # 最も包括的
+python test_filtered_summary.py
+```
 
-# 最新ログ確認
+### ログとデータ確認
+```bash
+# LMEレポートログ
 tail -f logs/lme_report_$(date +%Y%m%d).log
-
-# 出力ファイル確認
 ls -la output/LME_Daily_Report_Input_$(date +%Y%m%d).txt
 
-# 特定機能のテスト
-python test_equity_rics.py                    # 株価指数RIC動作確認
-python test_forward_curve.py                  # フォワードカーブ機能テスト
-python test_futures_swap_rics.py              # 先物・スワップレートRICテスト
-python test_timeseries_method.py              # 時系列データ取得テスト
-```
-
-### デバッグとトラブルシューティング
-```bash
-# 特定のデータセクションのみ実行
-python -c "from lme_daily_report import LMEReportGenerator; gen = LMEReportGenerator(); print(gen.get_price_data())"
-python -c "from lme_daily_report import LMEReportGenerator; gen = LMEReportGenerator(); print(gen.get_forward_curve_data())"
-
-# APIキー動作確認（機密情報注意）
-python -c "import eikon as ek; ek.set_app_key('YOUR_KEY'); df, err = ek.get_data(['CMCU3'], ['CF_LAST']); print(df, err)"
-
-# 営業日計算の確認
-python -c "from datetime import datetime, timedelta; print('T-1:', (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'))"
+# 銅スプレッドログ
+tail -f CopperSpreadAnalyzer/logs/copper_spread_jst_minute.log
+ls -la CopperSpreadAnalyzer/output/
 ```
 
 ## アーキテクチャ概要
 
-### コアシステム設計
-`LMEReportGenerator`クラスを中心とした単一目的データ集約システム：
+このリポジトリには2つの主要システムが含まれており、どちらもRefinitiv EIKON APIを使用して金属市場データを取得します：
 
-1. **データパイプラインアーキテクチャ**: Refinitiv EIKON API → データ処理 → レポート生成 → ファイル出力
-2. **マルチソース統合**: LME、COMEX、SHFE、SMMの市場データとマクロ指標を統合
-3. **エラー耐性設計**: 包括的なフォールバック機構とリトライロジック
-4. **自動スケジューリング**: タスクスケジューラーでの無人日次実行向け設計
+### 1. LME日次レポートシステム（ルートディレクトリ）
+Claude分析用の包括的市場レポート生成システム
 
-### 主要コンポーネント
+**設計原則：**
+- **単一目的データ集約**: LME主要6金属の全市場データを1つのプロンプトファイルに統合
+- **Claude最適化**: 構造化テキストファイルでClaude分析向けに設計
+- **エラー耐性**: 包括的フォールバック機構とリトライロジック
+- **無人実行**: タスクスケジューラーでの日次自動実行向け
 
-#### LMEReportGeneratorクラス
-- **初期化**: 設定読み込みとEIKON API接続初期化
-- **データ収集**: 異なる市場セグメント向けの5つの主要データ収集メソッド
-- **レポート組み立て**: 収集データをClaude最適化プロンプト構造にフォーマット
-- **エラーハンドリング**: API失敗時のフォールバックデータによる適切な劣化
+**主要コンポーネント：**
+- `LMEReportGenerator`クラス: 中央制御システム
+- データ収集メソッド: 価格、在庫、取引量、マクロ、ニュース、フォワードカーブ
+- RIC管理: 広範なRICマッピングと代替RIC機構
+- レポート出力: `output/LME_Daily_Report_Input_YYYYMMDD.txt`
 
-#### 設定管理
-- `config.json`: 全インストゥルメントのRICコードを含む集中設定
-- 機密データ用の`.env`ファイルによる環境変数サポート
-- 異なる取引所・インストゥルメント向けの市場固有RICマッピング
+### 2. 銅スプレッドアナライザーシステム（CopperSpreadAnalyzerディレクトリ）
+LME銅先物スプレッド取引の専門分析システム
 
-#### データフローアーキテクチャ
-1. **価格データ**: 5営業日トレンド分析を含む履歴・現在価格、線形回帰による方向性判定
-2. **在庫データ**: マルチ取引所在庫レベル（LME、COMEX、SHFE、SMM）、5営業日変動分析
-3. **取引量データ**: 取引活動レベル評価、平均比較分析
-4. **フォワードカーブ**: 第3水曜日ベース24ヶ月先物価格、T-1 vs T-2比較、コンタンゴ/バックワーデーション判定
-5. **マクロデータ**: 金属市場に影響する経済指標（USD指数、実際の金利データ、中国経済指標）
-6. **スワップレート**: USD/JPY金利スワップ・預金金利（フォワード取引支援）
-7. **株式市場データ**: 主要国株価指数（現物・先物選択的使用）、日次・週次・月次変動率
-8. **リスクセンチメント**: VIX恐怖指数、金価格、USD/JPY等を組み合わせたリスクオン/オフ自動判定
-9. **ニュースデータ**: 包括的ニュース取得（金属市場全般・中国経済・各金属固有）、本文内容付き
+**設計原則：**
+- **専門特化**: 銅先物スプレッド351組み合わせの網羅的分析
+- **高頻度データ**: 分単位取引データの詳細分析
+- **対話型UI**: ユーザーフレンドリーな日付選択インターフェース
+- **期間構造分析**: 前日終値、最終価格、価格変動パターン分析
 
-### レポート出力構造
-Claude分析向け入力として設計された構造化テキストファイルを生成：
-- **プロンプト部分**: レポート生成指示
-- **市場データ部分**: データタイプ別に明確にフォーマット
-- **分析指示**: 市場解釈のための具体的ガイダンス
+**主要コンポーネント：**
+- 対話型システム: `copper_spread_jst_minute.py`（メイン）
+- バッチ処理: `run_historical_batch.py`
+- レポート生成: `generate_monthly_report.py`
+- 出力ファイル: 日次取引明細とサマリーCSV
 
-### RICコードアーキテクチャ
-システムは広範なRIC（Reuters Instrument Code）マッピングと代替RIC機構を使用：
-- **金属先物**: 3ヶ月LME契約（CMCU3、CMAL3等）+ 代替RIC自動フォールバック
-- **フォワードカーブ**: 動的月コードマッピング（CMCUM25, CMCUN25等）、第3水曜日ベース自動生成
-- **株式指数**: 現物優先・先物代用戦略（.IXIC現物、ESc1先物等）
-- **スワップレート**: 金利スワップ・預金金利（USDIRSS2Y=、JPY1YD=等）
-- **在庫コード**: 取引所固有の在庫識別子（時系列データによる堅牢な取得）
-- **マクロ指標**: 経済データポイント（.DXY、TNX直接金利、中国PMI/GDP/CPI等）
-- **ニュースRIC**: 包括的検索クエリによる重要度スコアリング付きニュース取得
+## システム間の相互関係
 
-### エラーハンドリング戦略
-- **マルチレベルフォールバック**: API失敗時のフォールバックデータ生成
-- **包括的ログ**: ローテーション・エラートラッキング付き詳細ログ
-- **適切な劣化**: 部分的データ失敗でもシステム継続動作
-- **リトライロジック**: 指数バックオフ付き設定可能リトライ試行
+### 共通基盤
+- **EIKON API**: 両システムともRefinitiv EIKON Data APIを使用
+- **設定管理**: 共通の`config.json`でAPIキーを管理
+- **営業日計算**: 土日除外の営業日ベース日付処理
+- **エラーハンドリング**: API制限とデータ取得失敗への対応
 
-### 自動化設計
-- **クロスプラットフォームスクリプト**: UnixシェルとWindowsバッチ実行
-- **仮想環境管理**: 自動venv作成とパッケージインストール
-- **タスクスケジューラー統合**: Windows Task Scheduler用テンプレートXML
-- **依存関係検証**: Python、パッケージ、設定の実行前チェック
+### 異なる焦点
+- **LME日次レポート**: 広範な市場データ → Claude分析 → 意思決定支援
+- **銅スプレッドアナライザー**: 詳細取引データ → CSV分析 → トレーディング支援
+
+## 重要な技術的制約
+
+### EIKON API制約と対処法
+- **分単位データ制約**: 単日指定では取得不可 → マルチデイ範囲取得後フィルタリング
+- **API制限**: Rate limiting対応 → 0.05-2秒間隔での順次処理
+- **RIC権限**: 一部先物限月でアクセス制限 → 代替RIC機構とエラー継続処理
+
+### データ取得方法論
+- **get_timeseries() vs get_data()**: フォワードカーブ等の正確な過去価格には`get_timeseries()`を使用
+- **営業日計算**: `weekday() >= 5`で土日除外の正確な営業日ベース計算
+- **pandas NA値処理**: `pd.isna()`による適切なnullチェックが必須
+
+## 設定ファイル構造
+
+### config.json（共通設定）
+```json
+{
+  "eikon_api_key": "YOUR_ACTUAL_API_KEY",
+  "metals_rics": {
+    "Copper": "CMCU3",
+    "Aluminium": "CMAL3"
+  },
+  "forward_curve_rics": {},
+  "equity_indices": {},
+  "usdjpy_swap_rates": {},
+  "news_settings": {
+    "enable_news_collection": true
+  }
+}
+```
+
+**重要項目：**
+- `metals_rics`: メイン金属RIC（3ヶ月先物）
+- `forward_curve_rics`: 従来固定期間RIC（現在未使用、動的生成に移行）
+- `equity_indices`: 現物・先物混合設定（権限最適化済み）
+- `news_settings`: ニュース取得の有効/無効切替
+
+## パフォーマンス特性
+
+### LME日次レポート
+- **実行時間**: 通常2-3分、フォワードカーブ取得が主要時間要因
+- **ボトルネック**: ニュース取得（API制限）、24ヶ月×6金属の時系列データ
+- **最適化**: `enable_news_collection: false`で約2-3分に短縮
+
+### 銅スプレッドアナライザー
+- **実行時間**: 全351組み合わせで約15-20分（API制限による）
+- **メモリ使用**: 分単位データで数MB〜数十MB
+- **流動性**: 351組み合わせ中30-40個程度で実際取引あり
+
+## エラー復旧手順
+
+### 共通問題
+1. **API接続エラー**: APIキー確認、EIKON Desktop起動確認
+2. **datetime64エラー**: 修正済み、文字列形式日付使用
+3. **API制限エラー**: `enable_news_collection: false`設定
+4. **RIC無効エラー**: ログ確認後、代替RIC検索
+
+### システム固有問題
+- **LMEレポート**: フォールバックデータで継続、`config.json`調整
+- **銅スプレッド**: 前日終値取得失敗時はNone値設定で継続
+
+## 出力ファイル構造
+
+### LME日次レポート
+```
+output/LME_Daily_Report_Input_YYYYMMDD.txt
+├── Claude用プロンプト部分
+├── 市場データ（価格、在庫、取引量、マクロ、ニュース）
+└── 分析指示
+```
+
+### 銅スプレッドアナライザー
+```
+CopperSpreadAnalyzer/output/
+├── copper_spread_trades_minute_jst_YYYY-MM-DD.csv      # 分単位取引明細
+├── copper_spread_summary_minute_jst_YYYY-MM-DD.csv     # 日次サマリー
+├── copper_spread_monthly_report_START_to_END.csv       # 月次集計
+└── copper_spread_daily_summary_START_to_END.csv        # 日別統計
+```
 
 ## 重要事項
 
@@ -133,112 +196,27 @@ Claude分析向け入力として設計された構造化テキストファイ�
 - `config.json`のEIKON APIキーは実際の値が設定済み
 - 機密情報のため、コミット時は必ず確認
 
-### データ取得方法論（重要）
-- **get_timeseries() vs get_data()**: フォワードカーブ等の正確な過去価格取得にはget_timeseries()を使用
-- **営業日計算**: 土日除外の適切な営業日ベース計算（T-1, T-2価格比較）
-- **pandas NA値処理**: `pd.isna()`による適切なnullチェックが必須
-- **RIC権限管理**: アクセス制限対応のため現物/先物選択的使用
+### 銅スプレッド分析の活用
+- **RIC命名**: `CMCU{near_leg}-{far_leg}` (例: CMCU0-N25, CMCU3-V25)
+- **限月コード**: F=1月, G=2月, H=3月, J=4月, K=5月, M=6月, N=7月, Q=8月, U=9月, V=10月, X=11月, Z=12月
+- **前日終値機能**: 当日取引価格と前日終値の比較分析が可能
 
-### レポート生成の性能
-- 通常2-3分で完了
-- フォワードカーブ取得が時間要因（24ヶ月×6金属の時系列データ）
-- ニュース取得がボトルネック（API制限によるレート調整）
-- タイムアウト発生時は300秒（5分）制限で再実行
+### 営業日計算の精度
+両システムとも土日を正確に除外した営業日ベース計算を実装。週末や祝日の自動処理により、月曜実行時は金曜日データを自動取得。
 
-### 設定ファイル構造（重要）
-- `forward_curve_rics`: 従来の固定期間RIC（現在は未使用、第3水曜日動的生成に移行）
-- `equity_indices`: 現物・先物混合設定（権限に応じた最適化済み）
-- `usdjpy_swap_rates`: スワップ取引支援用金利データ
-- `metals_rics`: メイン金属RIC（3ヶ月先物）
+## 銅スプレッドアナライザーの対話型実行
 
-## 主要機能拡張（2025年6月）
+メインスクリプト実行時の対話フロー：
+```
+==================================================
+LME銅スプレッドデータ取得システム
+==================================================
+実行モードを選択してください:
+1. 単一日付を指定
+2. 期間を指定
+3. 直近N営業日
+4. 過去1ヶ月分（自動）
+==================================================
+```
 
-### フォワードカーブ・期間構造分析システム（最新追加）
-- **第3水曜日ベース**: LME契約満期の第3水曜日を基準とした24ヶ月先までのフォワードカーブ
-- **月次グリッド**: 1年以内は月次詳細（0M-12M）、以降は四半期間隔（15M、18M、24M）
-- **T-1 vs T-2価格比較**: 前営業日と前々営業日の価格変化分析（営業日ベース）
-- **コンタンゴ/バックワーデーション**: 期間構造の自動判定と強度評価
-- **スプレッド分析**: 月次スプレッド変化と主要クロススプレッド（3M-1M、6M-3M、12M-6M）
-- **RIC生成**: 月コード自動マッピング（F=Jan, G=Feb, H=Mar, J=Apr, K=May, M=Jun, N=Jul, Q=Aug, U=Sep, V=Oct, X=Nov, Z=Dec）
-
-### USD/JPYスワップレート機能（最新追加）
-- **金利スワップ**: USD 2年IRSの取得
-- **預金金利**: JPY/USD 1年・2年預金金利データ
-- **フォワード取引支援**: 期先のドル円取引に必要な金利情報
-- **自動説明**: スワップレート名の日本語説明付き表示
-
-### 株式指数の最適化（最新更新）
-- **選択的先物使用**: アクセス制限のある指数（S&P 500、Nikkei）のみ先物RICで代用
-- **現物指数優先**: 取得可能な現物指数（NASDAQ、DOW、HANG_SENG、FTSE、DAX、CAC等）はそのまま使用
-- **包括的カバレッジ**: 10個の主要株価指数による包括的市場状況把握
-
-### 5営業日トレンド分析システム
-- **価格トレンド**: 線形回帰による傾向判定（上昇・下降・横ばい）、強度評価
-- **在庫分析**: 直近5営業日の在庫変動パターン分析
-- **取引量評価**: 平均比較による活動度レベル判定（高・中・低）
-- **連続方向性**: 連続上昇・下降日数の自動カウント
-
-### 包括的ニュース取得機能（最新更新2025年6月）
-- **多層検索**: 金属市場全般・中国経済・各金属固有のニュースセクション
-- **本文取得**: HTMLクリーニングと適切な長さでの本文内容取得（2000文字まで拡張）
-- **重要度スコアリング**: キーワード分析による自動優先度付け
-- **重複排除**: 高度な重複検出とフィルタリング
-- **3営業日フィルタリング**: 直近3営業日以内のニュースのみを取得し、古い情報を自動除外
-- **営業日計算**: 土日を除外した正確な営業日ベースでの日付範囲設定
-
-### データ取得の堅牢性向上
-- **get_timeseries API**: より正確な過去価格データ取得のためget_data()からget_timeseries()への移行
-- **営業日計算**: 土日を除外した正確な営業日ベース日付計算
-- **代替RIC機構**: メインRIC失敗時の自動代替RIC試行
-- **NA値処理**: pandasのNA値に対する適切なnullチェック実装
-
-### リスクセンチメント分析エンジン
-- **総合判定システム**: 複数指標を組み合わせたリスクオン/オフの自動判定
-- **信頼度レベル**: 取得可能指標数に基づく判定信頼度の自動算出
-- **主要指標**: VIX恐怖指数、金価格、USD/JPY、銅金比率、米2Y-10Yスプレッド、クレジットスプレッド
-- **アルゴリズム**: 各指標の閾値ベース判定→リスクオン/オフ信号生成→総合スコア算出
-
-## 重要な技術的問題と対処法
-
-### API制限・エラー処理（最新2025年6月）
-- **datetime64エラー**: EIKON ニュースAPI呼び出し時の`datetime64 values must have a unit specified`エラー
-  - **修正済み**: `ek.get_news_headlines`の日付パラメータを`datetime`オブジェクトから文字列形式（`YYYY-MM-DD`）に変換
-  - **場所**: `lme_daily_report.py:1660-1684`
-- **ニュース日付フィルタリング（最新追加）**: 3営業日以内のニュースのみを取得する機能
-  - **営業日計算**: `check_date.weekday() < 5`で土日を除外した営業日ベース計算
-  - **日付範囲指定**: API呼び出し時に`date_from`と`date_to`パラメータで期間制限
-  - **後処理フィルタリング**: 取得後に各ニュースの日付を再チェックし、3営業日より古いものを除外
-  - **場所**: `lme_daily_report.py:1605-1723`
-- **API制限対策**: Rate limiting (429エラー) 対応
-  - **設定**: `config.json`の`news_settings.enable_news_collection`でニュース取得の有効/無効切替
-  - **フォールバック**: API制限時は自動的にフォールバックデータを使用してレポート生成継続
-- **RIC無効エラー**: 一部の先物RIC（特にTin 2026-2027年限月）で`Invalid RIC`エラー発生
-  - **対処**: エラーログに記録するが処理継続、利用可能なデータでレポート完成
-
-### テストファイル構造
-システムには以下の専用テストファイルが含まれる：
-- `test_equity_rics.py`: 株価指数RIC動作確認
-- `test_forward_curve.py`: フォワードカーブ機能テスト  
-- `test_futures_swap_rics.py`: 先物・スワップレートRICテスト
-- `test_timeseries_method.py`: 時系列データ取得テスト
-- `test_missing_indices.py`: 欠損指数の特定テスト
-- `test_more_swap_rics.py`: 追加スワップレートテスト
-- `test_original_equity_rics.py`: 元の株価指数RICテスト
-
-### 実行時間とパフォーマンス最適化
-- **フォワードカーブ取得**: 最も時間を要する処理（24ヶ月×6金属＝144個のRIC時系列取得）
-- **ニュース取得**: API制限によりボトルネックとなる可能性
-- **推奨タイムアウト**: 300秒（5分）でタイムアウト設定、失敗時は再実行
-- **最適化**: `enable_news_collection: false`での実行で約2-3分に短縮可能
-
-### エラー復旧手順
-1. **datetime64エラー発生時**: 既に修正済み、文字列形式日付使用を確認
-2. **古いニュース問題**: 既に修正済み、3営業日フィルタリング機能が自動で古いニュースを除外
-3. **API制限エラー発生時**: `config.json`で`enable_news_collection: false`に設定
-4. **RIC無効エラー**: ログ確認後、該当金属の代替RIC検索または設定更新
-5. **完全失敗時**: フォールバックデータでレポート生成、手動データ確認
-
-### 最新の修正済み問題（2025年6月）
-- **ニュース本文切り詰め問題**: 本文長制限を800文字から2000文字に拡張し、表示フォーマットも改善
-- **古いニュース混入問題**: 3営業日フィルタリング機能により、古いニュースは自動的に除外される
-- **営業日計算精度**: 土日を正確に除外した営業日ベース計算を実装
+各モードで適切な日付入力を求められ、ユーザーフレンドリーな方式でデータ取得が可能。
