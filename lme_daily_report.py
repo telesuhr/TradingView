@@ -585,11 +585,21 @@ class LMEReportGenerator:
         return inventory_data
         
     def _get_lme_inventory(self) -> Dict:
-        """LME在庫データ取得（時系列データを使用）"""
+        """LME在庫データ取得（ワラント詳細付き）"""
         lme_data = {}
         
         try:
             lme_inventory_rics = self.config.get("lme_inventory_rics", {})
+            
+            # ワラント詳細RICマッピング（ユーザー発見パターン）
+            warrant_detail_rics = {
+                "Copper": "MCUSTX-TOTAL",
+                "Aluminium": "MALSTX-TOTAL", 
+                "Zinc": "MZNSTX-TOTAL",
+                "Lead": "MPBSTX-TOTAL",
+                "Nickel": "MNISTX-TOTAL",
+                "Tin": "MSNSTX-TOTAL"
+            }
             
             for metal_name, ric in lme_inventory_rics.items():
                 try:
@@ -639,6 +649,48 @@ class LMEReportGenerator:
                         except Exception as ts_error:
                             self.logger.debug(f"LME {metal_name} 時系列データ取得エラー: {ts_error}")
                     
+                    # ワラント詳細データ取得（ユーザー発見パターン）
+                    on_warrant = None
+                    cancelled_warrant = None
+                    delivered_in = None
+                    delivered_out = None
+                    cancel_ratio = None
+                    
+                    warrant_ric = warrant_detail_rics.get(metal_name)
+                    if warrant_ric:
+                        try:
+                            warrant_fields = ['GEN_VAL1', 'GEN_VAL2', 'GEN_VAL3', 'GEN_VAL4', 'GEN_VAL7']
+                            warrant_data, warrant_err = ek.get_data(warrant_ric, warrant_fields)
+                            
+                            if warrant_data is not None and not warrant_data.empty:
+                                row = warrant_data.iloc[0]
+                                
+                                # ユーザー発見のフィールドマッピング
+                                delivered_in = row.get('GEN_VAL1')  # Delivered In
+                                delivered_out = row.get('GEN_VAL2')  # Delivered Out
+                                on_warrant = row.get('GEN_VAL3')  # オンワラント在庫
+                                cancelled_warrant = row.get('GEN_VAL4')  # キャンセルワラント
+                                cancel_ratio = row.get('GEN_VAL7')  # キャンセルワラント比率
+                                
+                                # 値の検証とログ出力
+                                if on_warrant is not None and not pd.isna(on_warrant):
+                                    self.logger.info(f"LME {metal_name} オンワラント: {on_warrant:,.0f}トン")
+                                if cancelled_warrant is not None and not pd.isna(cancelled_warrant):
+                                    self.logger.info(f"LME {metal_name} キャンセルワラント: {cancelled_warrant:,.0f}トン")
+                                if cancel_ratio is not None and not pd.isna(cancel_ratio):
+                                    self.logger.info(f"LME {metal_name} キャンセル比率: {cancel_ratio:.1f}%")
+                                
+                                # 計算による総在庫の補完
+                                if total_stock is None and on_warrant is not None and cancelled_warrant is not None:
+                                    total_stock = on_warrant + cancelled_warrant
+                                    self.logger.info(f"LME {metal_name} 総在庫（計算値）: {total_stock:,.0f}トン")
+                                    
+                            if warrant_err:
+                                self.logger.debug(f"LME {metal_name} ワラント詳細警告: {warrant_err}")
+                                
+                        except Exception as warrant_error:
+                            self.logger.debug(f"LME {metal_name} ワラント詳細取得エラー: {warrant_error}")
+                    
                     if total_stock is None:
                         self.logger.warning(f"LME {metal_name} 在庫データが取得できません")
                     
@@ -647,8 +699,11 @@ class LMEReportGenerator:
                     
                     lme_data[metal_name] = {
                         'total_stock': total_stock,
-                        'live_warrant': None,  
-                        'cancelled_warrant': None,
+                        'on_warrant': on_warrant,
+                        'cancelled_warrant': cancelled_warrant,
+                        'delivered_in': delivered_in,
+                        'delivered_out': delivered_out,
+                        'cancel_ratio': cancel_ratio,
                         'trend': inventory_trend
                     }
                         
@@ -771,6 +826,604 @@ class LMEReportGenerator:
             self.logger.error(f"SMM在庫データ取得エラー: {e}")
             
         return smm_data
+    
+    def get_fund_position_data(self) -> Dict:
+        """投資ファンドポジションデータ取得"""
+        self.logger.info("投資ファンドポジションデータ取得開始")
+        fund_data = {}
+        
+        try:
+            fund_position_rics = self.config.get("fund_position_rics", {})
+            
+            for metal_name, rics in fund_position_rics.items():
+                try:
+                    long_ric = rics.get("long_ric")
+                    short_ric = rics.get("short_ric")
+                    
+                    if not long_ric or not short_ric:
+                        continue
+                    
+                    self.logger.info(f"{metal_name} ファンドポジション取得中...")
+                    
+                    # ロングポジション取得
+                    long_value = None
+                    long_date = None
+                    try:
+                        long_data, long_err = ek.get_data(long_ric, ['CF_LAST', 'CF_DATE', 'CF_NAME'])
+                        if long_data is not None and not long_data.empty:
+                            row = long_data.iloc[0]
+                            long_value = row.get('CF_LAST')
+                            long_date = row.get('CF_DATE')
+                            if pd.notna(long_value) and long_value is not None:
+                                self.logger.info(f"{metal_name} ロングポジション: {long_value:,.0f}")
+                            else:
+                                long_value = None
+                        if long_err:
+                            self.logger.debug(f"{metal_name} ロングポジション警告: {long_err}")
+                    except Exception as long_error:
+                        self.logger.warning(f"{metal_name} ロングポジション取得エラー: {long_error}")
+                    
+                    # ショートポジション取得
+                    short_value = None
+                    short_date = None
+                    try:
+                        short_data, short_err = ek.get_data(short_ric, ['CF_LAST', 'CF_DATE', 'CF_NAME'])
+                        if short_data is not None and not short_data.empty:
+                            row = short_data.iloc[0]
+                            short_value = row.get('CF_LAST')
+                            short_date = row.get('CF_DATE')
+                            if pd.notna(short_value) and short_value is not None:
+                                self.logger.info(f"{metal_name} ショートポジション: {short_value:,.0f}")
+                            else:
+                                short_value = None
+                        if short_err:
+                            self.logger.debug(f"{metal_name} ショートポジション警告: {short_err}")
+                    except Exception as short_error:
+                        self.logger.warning(f"{metal_name} ショートポジション取得エラー: {short_error}")
+                    
+                    # データが両方取得できた場合のみ保存
+                    if long_value is not None and short_value is not None:
+                        net_position = long_value - short_value
+                        total_position = long_value + short_value
+                        long_ratio = (long_value / total_position) * 100 if total_position > 0 else 0
+                        
+                        # センチメント判定
+                        if total_position > 0:
+                            ls_ratio = long_value / short_value
+                            if ls_ratio > 2.5:
+                                sentiment = "強気バイアス"
+                            elif ls_ratio > 1.5:
+                                sentiment = "やや強気"
+                            elif ls_ratio > 0.8:
+                                sentiment = "中立"
+                            elif ls_ratio > 0.5:
+                                sentiment = "やや弱気"
+                            else:
+                                sentiment = "弱気バイアス"
+                        else:
+                            sentiment = "データ不足"
+                        
+                        fund_data[metal_name] = {
+                            'long_position': long_value,
+                            'short_position': short_value,
+                            'net_position': net_position,
+                            'long_ratio': long_ratio,
+                            'sentiment': sentiment,
+                            'last_updated': str(long_date) if long_date else str(short_date)
+                        }
+                        
+                        self.logger.info(f"{metal_name} ネットポジション: {net_position:,.0f} ({sentiment})")
+                    else:
+                        self.logger.warning(f"{metal_name} ファンドポジション: データ取得失敗")
+                        
+                except Exception as e:
+                    self.logger.error(f"{metal_name} ファンドポジションデータエラー: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"ファンドポジションデータ取得エラー: {e}")
+            
+        self.logger.info("投資ファンドポジションデータ取得完了")
+        return fund_data
+    
+    def get_shanghai_copper_premium_data(self) -> Dict:
+        """上海銅プレミアムデータ取得"""
+        self.logger.info("上海銅プレミアムデータ取得開始")
+        premium_data = {}
+        
+        try:
+            shanghai_premium_rics = self.config.get("shanghai_copper_premium_rics", {})
+            
+            for premium_type, info in shanghai_premium_rics.items():
+                try:
+                    ric = info.get("ric")
+                    name = info.get("name")
+                    description = info.get("description")
+                    source = info.get("source")
+                    ranking = info.get("ranking", 0)
+                    
+                    if not ric:
+                        continue
+                    
+                    self.logger.info(f"{name} プレミアム取得中... (RIC: {ric})")
+                    
+                    # プレミアムデータ取得
+                    fields = ['CF_LAST', 'CF_DATE', 'CF_NAME', 'CF_HIGH', 'CF_LOW', 'CF_CLOSE']
+                    data, err = ek.get_data(ric, fields)
+                    
+                    premium_value = None
+                    premium_date = None
+                    high_value = None
+                    low_value = None
+                    close_value = None
+                    
+                    if data is not None and not data.empty:
+                        row = data.iloc[0]
+                        premium_value = row.get('CF_LAST')
+                        premium_date = row.get('CF_DATE')
+                        name_field = row.get('CF_NAME')
+                        high_value = row.get('CF_HIGH')
+                        low_value = row.get('CF_LOW')
+                        close_value = row.get('CF_CLOSE')
+                        
+                        if pd.notna(premium_value) and premium_value is not None:
+                            self.logger.info(f"{name}: {premium_value:.2f} USD/MT")
+                            
+                            # 価格レンジ情報
+                            price_range = {}
+                            if pd.notna(high_value):
+                                price_range['high'] = high_value
+                            if pd.notna(low_value):
+                                price_range['low'] = low_value
+                            if pd.notna(close_value):
+                                price_range['close'] = close_value
+                                
+                        else:
+                            premium_value = None
+                            self.logger.warning(f"{name}: 有効なプレミアム値なし")
+                    else:
+                        self.logger.warning(f"{name}: データ取得失敗")
+                    
+                    if err:
+                        self.logger.debug(f"{name} プレミアム警告: {err}")
+                    
+                    # 7日間のトレンド分析
+                    trend_info = None
+                    try:
+                        from datetime import datetime, timedelta
+                        end_date = datetime.now()
+                        start_date = end_date - timedelta(days=7)
+                        
+                        ts_data = ek.get_timeseries(
+                            ric,
+                            fields=['CLOSE'],
+                            start_date=start_date.strftime('%Y-%m-%d'),
+                            end_date=end_date.strftime('%Y-%m-%d')
+                        )
+                        
+                        if ts_data is not None and not ts_data.empty:
+                            close_series = ts_data['CLOSE'].dropna()
+                            if len(close_series) >= 3:
+                                avg_7d = close_series.mean()
+                                std_7d = close_series.std()
+                                
+                                # トレンド計算
+                                if len(close_series) >= 5:
+                                    recent_avg = close_series.tail(3).mean()
+                                    older_avg = close_series.head(3).mean()
+                                    trend_change = recent_avg - older_avg
+                                    
+                                    if abs(trend_change) < std_7d * 0.5:
+                                        trend_direction = "横ばい"
+                                    elif trend_change > 0:
+                                        trend_direction = "上昇"
+                                    else:
+                                        trend_direction = "下降"
+                                    
+                                    trend_info = {
+                                        'avg_7d': avg_7d,
+                                        'std_7d': std_7d,
+                                        'trend_direction': trend_direction,
+                                        'trend_change': trend_change,
+                                        'data_points': len(close_series)
+                                    }
+                                    
+                                    self.logger.debug(f"{name} 7日トレンド: {trend_direction} ({trend_change:+.2f})")
+                                    
+                    except Exception as trend_error:
+                        self.logger.debug(f"{name} トレンド分析エラー: {trend_error}")
+                    
+                    # 結果保存
+                    premium_data[premium_type] = {
+                        'ric': ric,
+                        'name': name,
+                        'description': description,
+                        'source': source,
+                        'ranking': ranking,
+                        'premium_value': premium_value,
+                        'premium_date': str(premium_date) if premium_date else None,
+                        'price_range': price_range if 'price_range' in locals() else {},
+                        'trend_info': trend_info,
+                        'last_updated': str(premium_date) if premium_date else None
+                    }
+                    
+                    if premium_value is not None:
+                        self.logger.info(f"{name} プレミアム取得成功: {premium_value:.2f} USD/MT")
+                    else:
+                        self.logger.warning(f"{name} プレミアム取得失敗")
+                        
+                except Exception as e:
+                    self.logger.error(f"{name} プレミアムデータエラー: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"上海銅プレミアムデータ取得エラー: {e}")
+            
+        self.logger.info("上海銅プレミアムデータ取得完了")
+        return premium_data
+    
+    def get_exchange_curves_data(self, metal: str = "copper") -> Dict:
+        """取引所間フォワードカーブデータ取得（汎用エンジン）"""
+        self.logger.info(f"{metal}取引所間フォワードカーブデータ取得開始")
+        curves_data = {}
+        
+        try:
+            exchange_curves = self.config.get("exchange_curves", {}).get(metal, {})
+            
+            if not exchange_curves:
+                self.logger.warning(f"{metal}のカーブ設定が見つかりません")
+                return curves_data
+            
+            # USD/CNY為替レート取得（通貨変換用）
+            usdcny_rate = self._get_usdcny_rate()
+            
+            for exchange_code, exchange_info in exchange_curves.items():
+                try:
+                    exchange_name = exchange_info.get("exchange_name", exchange_code)
+                    currency = exchange_info.get("currency", "USD")
+                    contracts = exchange_info.get("contracts", {})
+                    
+                    if not contracts or "comment" in contracts:
+                        self.logger.info(f"{exchange_name}: 未実装スキップ")
+                        continue
+                    
+                    self.logger.info(f"{exchange_name} カーブデータ取得中...")
+                    
+                    exchange_curve = {}
+                    successful_contracts = 0
+                    
+                    for contract_key, contract_info in contracts.items():
+                        try:
+                            ric = contract_info.get("ric")
+                            name = contract_info.get("name")
+                            maturity_months = contract_info.get("maturity_months", 0)
+                            liquidity_tier = contract_info.get("liquidity_tier", "unknown")
+                            
+                            # LME動的RIC生成
+                            if exchange_code == "lme" and "MCU_DYNAMIC" in str(ric):
+                                ric = self._generate_lme_dynamic_ric(maturity_months)
+                                name = f"LME銅先物第{maturity_months}限月"
+                                self.logger.debug(f"LME動的RIC生成: 第{maturity_months}限月 → {ric}")
+                            
+                            if not ric:
+                                continue
+                            
+                            # 価格データ取得
+                            fields = ['CF_LAST', 'CF_DATE', 'CF_VOLUME', 'CF_HIGH', 'CF_LOW']
+                            data, err = ek.get_data(ric, fields)
+                            
+                            if data is not None and not data.empty:
+                                row = data.iloc[0]
+                                price = row.get('CF_LAST')
+                                date = row.get('CF_DATE')
+                                volume = row.get('CF_VOLUME')
+                                high = row.get('CF_HIGH')
+                                low = row.get('CF_LOW')
+                                
+                                if pd.notna(price) and price is not None:
+                                    # 通貨変換（USDベースに統一）
+                                    price_usd = self._convert_to_usd(price, currency, usdcny_rate, exchange_info)
+                                    
+                                    exchange_curve[contract_key] = {
+                                        'ric': ric,
+                                        'name': name,
+                                        'price_original': price,
+                                        'price_usd': price_usd,
+                                        'currency': currency,
+                                        'maturity_months': maturity_months,
+                                        'liquidity_tier': liquidity_tier,
+                                        'volume': volume if pd.notna(volume) else 0,
+                                        'high': high if pd.notna(high) else None,
+                                        'low': low if pd.notna(low) else None,
+                                        'date': str(date) if date else None
+                                    }
+                                    successful_contracts += 1
+                                    self.logger.debug(f"  {name}: {price:,.2f} {currency} → ${price_usd:,.2f}/MT")
+                                else:
+                                    self.logger.debug(f"  {name}: 価格データなし")
+                            else:
+                                self.logger.debug(f"  {name}: データ取得失敗")
+                            
+                            if err:
+                                self.logger.debug(f"  {name} 警告: {err}")
+                                
+                        except Exception as contract_error:
+                            self.logger.debug(f"  {name} エラー: {contract_error}")
+                    
+                    if exchange_curve:
+                        # 期間構造分析
+                        structure_analysis = self._analyze_curve_structure(exchange_curve, exchange_name)
+                        
+                        curves_data[exchange_code] = {
+                            'exchange_name': exchange_name,
+                            'currency': currency,
+                            'usdcny_rate': usdcny_rate,
+                            'contracts': exchange_curve,
+                            'structure_analysis': structure_analysis,
+                            'successful_contracts': successful_contracts,
+                            'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        
+                        self.logger.info(f"{exchange_name}: {successful_contracts}契約取得成功")
+                        self.logger.info(f"{exchange_name} 期間構造: {structure_analysis.get('structure_type', 'N/A')}")
+                    else:
+                        self.logger.warning(f"{exchange_name}: 有効なカーブデータなし")
+                        
+                except Exception as exchange_error:
+                    self.logger.error(f"{exchange_name} カーブエラー: {exchange_error}")
+            
+            # 取引所間比較分析
+            if len(curves_data) >= 2:
+                comparison_analysis = self._compare_exchange_curves(curves_data)
+                curves_data['cross_exchange_analysis'] = comparison_analysis
+                
+        except Exception as e:
+            self.logger.error(f"{metal}取引所間カーブデータ取得エラー: {e}")
+        
+        self.logger.info(f"{metal}取引所間フォワードカーブデータ取得完了")
+        return curves_data
+    
+    def _get_usdcny_rate(self) -> float:
+        """USD/CNY為替レート取得"""
+        try:
+            fx_data, fx_err = ek.get_data('CNY=', ['CF_LAST'])
+            if fx_data is not None and not fx_data.empty:
+                rate = fx_data.iloc[0].get('CF_LAST')
+                if pd.notna(rate) and rate is not None:
+                    self.logger.debug(f"USD/CNY為替レート取得: {rate:.4f}")
+                    return float(rate)
+        except Exception as e:
+            self.logger.debug(f"USD/CNY為替レート取得エラー: {e}")
+        
+        # フォールバック値
+        fallback_rate = 7.25
+        self.logger.debug(f"USD/CNY為替レートフォールバック: {fallback_rate}")
+        return fallback_rate
+    
+    def _convert_to_usd(self, price: float, currency: str, usdcny_rate: float, exchange_info: Dict = None) -> float:
+        """価格をUSDに変換（CME価格変換対応）"""
+        if currency == "USD":
+            # CMEの場合はセント/ポンドからUSD/MTへの変換が必要
+            if exchange_info and "price_conversion" in exchange_info:
+                conversion_info = exchange_info["price_conversion"]
+                if conversion_info.get("from_unit") == "cents_per_lb" and conversion_info.get("to_unit") == "usd_per_mt":
+                    conversion_factor = conversion_info.get("conversion_factor", 2204.62)
+                    # セント/ポンド → USD/MT: (price / 100) / 0.453592 * 1000 = price * 2204.62
+                    return price * conversion_factor
+            return price
+        elif currency == "CNY":
+            return price / usdcny_rate
+        else:
+            self.logger.warning(f"未対応通貨: {currency}")
+            return price
+    
+    def _generate_lme_dynamic_ric(self, maturity_months: int) -> str:
+        """LME動的RIC生成（MCU+月コード+年）"""
+        try:
+            # 月コード対応表
+            month_codes = {
+                1: 'F',   # January
+                2: 'G',   # February  
+                3: 'H',   # March
+                4: 'J',   # April
+                5: 'K',   # May
+                6: 'M',   # June
+                7: 'N',   # July
+                8: 'Q',   # August
+                9: 'U',   # September
+                10: 'V',  # October
+                11: 'X',  # November
+                12: 'Z'   # December
+            }
+            
+            # 現在日付から目標月を計算
+            current_date = datetime.now()
+            target_date = current_date + timedelta(days=30 * maturity_months)
+            
+            target_month = target_date.month
+            target_year = target_date.year
+            
+            month_code = month_codes.get(target_month, 'H')  # デフォルトは3月
+            year_code = str(target_year)[-2:]  # 西暦下2桁
+            
+            # RIC生成: MCU + 月コード + 西暦下2桁
+            dynamic_ric = f"MCU{month_code}{year_code}"
+            
+            self.logger.debug(f"動的RIC生成: {maturity_months}ヶ月後 → {target_year}-{target_month:02d} → {dynamic_ric}")
+            
+            return dynamic_ric
+            
+        except Exception as e:
+            self.logger.error(f"LME動的RIC生成エラー: {e}")
+            # フォールバック: 固定RIC
+            fallback_rics = {
+                1: "MCUN25", 2: "MCUQ25", 3: "MCUU25", 
+                4: "MCUV25", 5: "MCUX25", 6: "MCUZ25"
+            }
+            return fallback_rics.get(maturity_months, "MCUU25")
+    
+    def _analyze_curve_structure(self, curve_data: Dict, exchange_name: str) -> Dict:
+        """期間構造分析（コンタンゴ/バックワーデーション判定）"""
+        analysis = {
+            'structure_type': 'unknown',
+            'slope': 0,
+            'front_back_spread': 0,
+            'liquidity_concentration': 'unknown',
+            'price_range': {'min': 0, 'max': 0},
+            'dominant_contracts': []
+        }
+        
+        try:
+            # 満期順にソート
+            sorted_contracts = sorted(
+                [(k, v) for k, v in curve_data.items()],
+                key=lambda x: x[1]['maturity_months']
+            )
+            
+            if len(sorted_contracts) < 2:
+                return analysis
+            
+            # 価格レンジ
+            prices = [contract[1]['price_usd'] for contract in sorted_contracts]
+            analysis['price_range'] = {'min': min(prices), 'max': max(prices)}
+            
+            # フロント vs バック価格差
+            front_contract = sorted_contracts[0][1]
+            back_contract = sorted_contracts[-1][1]
+            front_back_spread = back_contract['price_usd'] - front_contract['price_usd']
+            months_diff = back_contract['maturity_months'] - front_contract['maturity_months']
+            
+            analysis['front_back_spread'] = front_back_spread
+            
+            if months_diff > 0:
+                monthly_slope = front_back_spread / months_diff
+                analysis['slope'] = monthly_slope
+                
+                if front_back_spread > 50:  # $50/MT以上の差
+                    analysis['structure_type'] = 'コンタンゴ'
+                elif front_back_spread < -50:
+                    analysis['structure_type'] = 'バックワーデーション'
+                else:
+                    analysis['structure_type'] = 'フラット'
+            
+            # 流動性集中度分析
+            high_volume_contracts = [
+                contract for contract in sorted_contracts
+                if contract[1]['volume'] > 10000
+            ]
+            
+            if len(high_volume_contracts) >= 3:
+                analysis['liquidity_concentration'] = '分散'
+            elif len(high_volume_contracts) >= 1:
+                analysis['liquidity_concentration'] = '集中'
+            else:
+                analysis['liquidity_concentration'] = '低流動性'
+            
+            # 主要契約特定
+            analysis['dominant_contracts'] = [
+                {
+                    'name': contract[1]['name'],
+                    'maturity_months': contract[1]['maturity_months'],
+                    'volume': contract[1]['volume']
+                }
+                for contract in sorted(sorted_contracts, key=lambda x: x[1]['volume'], reverse=True)[:3]
+                if contract[1]['volume'] > 0
+            ]
+            
+        except Exception as e:
+            self.logger.debug(f"{exchange_name} 期間構造分析エラー: {e}")
+        
+        return analysis
+    
+    def _compare_exchange_curves(self, curves_data: Dict) -> Dict:
+        """取引所間カーブ比較分析"""
+        comparison = {
+            'price_differentials': {},
+            'structure_comparison': {},
+            'arbitrage_opportunities': [],
+            'liquidity_comparison': {},
+            'correlation_analysis': {}
+        }
+        
+        try:
+            exchanges = [k for k in curves_data.keys() if k != 'cross_exchange_analysis']
+            
+            if len(exchanges) < 2:
+                return comparison
+            
+            # 同一満期での価格差分析
+            for i, exchange1 in enumerate(exchanges):
+                for j, exchange2 in enumerate(exchanges[i+1:], i+1):
+                    ex1_data = curves_data[exchange1]
+                    ex2_data = curves_data[exchange2]
+                    
+                    pair_key = f"{exchange1}_vs_{exchange2}"
+                    
+                    # 3ヶ月先物比較（共通満期）
+                    ex1_3m = self._find_contract_by_maturity(ex1_data['contracts'], 3)
+                    ex2_3m = self._find_contract_by_maturity(ex2_data['contracts'], 3)
+                    
+                    if ex1_3m and ex2_3m:
+                        price_diff = ex2_3m['price_usd'] - ex1_3m['price_usd']
+                        diff_percent = (price_diff / ex1_3m['price_usd']) * 100
+                        
+                        comparison['price_differentials'][pair_key] = {
+                            'price_diff_usd': price_diff,
+                            'diff_percent': diff_percent,
+                            'ex1_price': ex1_3m['price_usd'],
+                            'ex2_price': ex2_3m['price_usd'],
+                            'ex1_name': ex1_data['exchange_name'],
+                            'ex2_name': ex2_data['exchange_name']
+                        }
+                        
+                        # 裁定機会判定
+                        if abs(diff_percent) > 5:  # 5%以上の価格差
+                            opportunity = {
+                                'pair': pair_key,
+                                'type': 'buy_low_sell_high',
+                                'buy_exchange': exchange1 if price_diff > 0 else exchange2,
+                                'sell_exchange': exchange2 if price_diff > 0 else exchange1,
+                                'profit_potential': abs(price_diff),
+                                'profit_percent': abs(diff_percent)
+                            }
+                            comparison['arbitrage_opportunities'].append(opportunity)
+                    
+                    # 期間構造比較
+                    ex1_structure = ex1_data.get('structure_analysis', {}).get('structure_type', 'unknown')
+                    ex2_structure = ex2_data.get('structure_analysis', {}).get('structure_type', 'unknown')
+                    
+                    comparison['structure_comparison'][pair_key] = {
+                        'ex1_structure': ex1_structure,
+                        'ex2_structure': ex2_structure,
+                        'convergence': ex1_structure == ex2_structure
+                    }
+                    
+                    # 流動性比較
+                    ex1_total_volume = sum(c['volume'] for c in ex1_data['contracts'].values())
+                    ex2_total_volume = sum(c['volume'] for c in ex2_data['contracts'].values())
+                    
+                    comparison['liquidity_comparison'][pair_key] = {
+                        'ex1_volume': ex1_total_volume,
+                        'ex2_volume': ex2_total_volume,
+                        'volume_ratio': ex2_total_volume / ex1_total_volume if ex1_total_volume > 0 else 0
+                    }
+            
+        except Exception as e:
+            self.logger.debug(f"取引所間比較分析エラー: {e}")
+        
+        return comparison
+    
+    def _find_contract_by_maturity(self, contracts: Dict, target_months: int) -> Dict:
+        """指定満期に最も近い契約を検索"""
+        best_match = None
+        min_diff = float('inf')
+        
+        for contract in contracts.values():
+            maturity = contract.get('maturity_months', 0)
+            diff = abs(maturity - target_months)
+            if diff < min_diff:
+                min_diff = diff
+                best_match = contract
+        
+        return best_match
         
     def get_volume_data(self) -> Dict:
         """取引量データ取得"""
@@ -1785,33 +2438,18 @@ class LMEReportGenerator:
             try:
                 self.logger.debug(f"ニュース検索: {query}")
                 
-                # 3営業日以内のニュースのみ取得するため、必ず日付範囲を指定
+                # ニュースを取得（日付フィルタリングは取得後に実施）
                 headlines = None
                 try:
-                    # 日付範囲を指定して取得（3営業日以内のニュースのみ）
+                    # 日付範囲を指定せずに取得（後でフィルタリング）
                     headlines = ek.get_news_headlines(
                         query=query,
-                        count=self.config.get("news_settings", {}).get("max_news_per_query", 30),
-                        date_from=date_from_str,
-                        date_to=date_to_str
+                        count=self.config.get("news_settings", {}).get("max_news_per_query", 50)  # 多めに取得してフィルタリング
                     )
-                    self.logger.debug(f"日付指定でニュース取得成功: {query} ({date_from_str}〜{date_to_str})")
-                except Exception as date_error:
-                    self.logger.debug(f"日付指定でエラー: {query} - {date_error}")
-                    # datetime64エラーの場合は、このクエリをスキップ
-                    if "datetime64" in str(date_error):
-                        self.logger.debug(f"datetime64エラーのためクエリをスキップ: {query}")
-                        continue
-                    # その他のエラーの場合は、日付なしで試行（フォールバック）
-                    try:
-                        headlines = ek.get_news_headlines(
-                            query=query,
-                            count=self.config.get("news_settings", {}).get("max_news_per_query", 15)  # 数を減らしてリスク軽減
-                        )
-                        self.logger.debug(f"日付なしフォールバックでニュース取得成功: {query}")
-                    except Exception as fallback_error:
-                        self.logger.debug(f"フォールバックも失敗: {query} - {fallback_error}")
-                        continue
+                    self.logger.debug(f"ニュース取得成功: {query} (取得後に{date_from_str}〜{date_to_str}でフィルタリング)")
+                except Exception as error:
+                    self.logger.debug(f"ニュース取得エラー: {query} - {error}")
+                    continue
                 
                 if headlines is not None and len(headlines) > 0:
                     successful_queries += 1
@@ -2823,15 +3461,46 @@ class LMEReportGenerator:
         today = datetime.now().strftime("%Y年%m月%d日")
         
         content = f"""【Claude用プロンプト部分】
-以下のLME金属市場データを基に、機関投資家向けの日次マーケットレポートを日本語で作成してください。
+以下のLME金属市場データを基に、プロフェッショナルトレーダー・機関投資家向けの詳細な日次マーケットレポートを日本語で作成してください。
 
 【レポート要件】
-- 各金属の前日の価格動向分析
-- 3取引所在庫状況の評価とインプリケーション  
-- 重要ニュースの市場への影響分析
-- マクロ経済要因とドル円スワップレートの考慮
-- 本日の注目ポイントと短期見通し
-- プロフェッショナルかつ簡潔な日本語文体（800-1000語程度）
+■ 分析深度: 詳細分析（2000-3000語程度）、数値の具体的言及必須
+■ トレーディング重点: 銅（Copper）のアウトライト取引・スプレッド取引戦略に重点
+■ 包括的分析: 全6金属（Cu/Al/Zn/Pb/Ni/Sn）+ 3取引所比較 + マクロ環境
+■ ニュース解説重視: 主要ニュースの詳細解説と市場影響分析を必須項目化
+■ 実用性: 当日〜短期の取引判断に直結する情報提供
+
+【必須分析項目】
+1. **銅市場詳細分析**（最重要セクション）
+   - LME/上海/CME 3取引所価格差分析と裁定機会評価
+   - 期間構造（1-6ヶ月）変化とコンタンゴ/バックワーデーション意味
+   - 在庫動向（LME正式在庫+キャンセルワラント+上海保税倉庫）
+   - ファンドポジション変化とポジショニング分析
+   - 上海プレミアム3指標（洋山港/CIF/保税倉庫）の示唆
+
+2. **スプレッド取引戦略**
+   - カレンダースプレッド: 1M-3M, 3M-6M等の推奨ポジション
+   - 地域間スプレッド: LME-上海、LME-CME価格差の方向性
+   - 期間構造変化から読む最適エントリー/エグジットタイミング
+   - ロールオーバー時期（月次契約満期）の戦略的ポジショニング
+
+3. **アウトライト取引戦略**  
+   - 技術的支持・抵抗水準と価格ターゲット
+   - ファンダメンタルズ要因（在庫/需給/マクロ）に基づく方向感
+   - リスク要因と損切り水準の設定指針
+   - 取引量・流動性を考慮したポジションサイジング
+
+4. **他金属・マクロ分析**
+   - Al/Zn/Pb/Ni/Sn各金属の価格動向と銅との相関
+   - USD指数・金利・VIX等マクロ要因の金属価格への影響
+   - 地政学的リスク・中国経済指標の市場インパクト
+   - 株式市場動向と工業金属需要の連動性
+
+5. **主要ニュース解説・市場影響分析**（重要セクション）
+   - 各金属関連の主要ニュースの詳細解説と市場への影響度評価
+   - 中国経済・一般市場ニュースの金属価格への波及効果分析
+   - ニュースの信頼性・重要度に基づく優先順位付け
+   - 短期・中期の価格動向への影響予測とトレーディング示唆
 
 【市場データ - {today}】
 
@@ -2841,11 +3510,20 @@ class LMEReportGenerator:
 === 在庫状況 ===
 {self._format_inventory_data(data.get('inventory', {}))}
 
+=== 投資ファンドポジション ===
+{self._format_fund_position_data(data.get('fund_positions', {}))}
+
+=== 上海銅プレミアム ===
+{self._format_shanghai_copper_premium_data(data.get('shanghai_copper_premiums', {}))}
+
 === 取引量 ===
 {self._format_volume_data(data.get('volume', {}))}
 
 === フォワードカーブ・期間構造 ===
 {self._format_forward_curve_data(data.get('forward_curves', {}))}
+
+=== 取引所間カーブ比較（LME vs 上海） ===
+{self._format_exchange_curves_data(data.get('exchange_curves', {}))}
 
 === マクロ環境 ===
 {self._format_macro_data(data.get('macro', {}))}
@@ -2859,22 +3537,64 @@ class LMEReportGenerator:
 === 関連ニュース ===
 {self._format_news_data(data.get('news', {}))}
 
-【分析指示】
-- 数値は具体的に記載
-- 地政学的要因も考慮
-- リスク要因の言及も含める
-- 前日との比較分析を重視
-- 各金属の相関関係も分析
-- 今後の注目ポイントを明確に記載
-- 株式市場動向と金属需要の関連性を分析
-- リスクセンチメント（リスクオン/オフ）が金属価格に与える影響を評価
-- VIX、金価格、銅金比率等のセンチメント指標と金属市場の連動性を考察
-- 第3水曜日ベースのフォワードカーブ・期間構造の変化（コンタンゴ/バックワーデーション）の意味を分析
-- 各期間（1M、3M、6M、12M、24M）のスプレッド変化が示唆する需給バランス変化を評価
-- 第3水曜日決済における期間構造が示すマーケットセンチメントと将来見通しを考察
-- LME標準契約の月次満期構造から読み取れる市場の需給見通しと投資家ポジショニングを分析
-- ドル円スワップレート（USD/JPY金利スワップ・預金金利）の変化が金属のフォワード取引に与える影響を考察
-- USD/JPY金利差の変動がLME金属の期間構造やヘッジコストに与えるインパクトを評価
+【詳細分析指示】
+
+■ **データ活用方針**
+- 全ての数値を具体的に記載（小数点2桁まで）
+- 前日比・週次比・月次比変化率を明示
+- パーセンテージと絶対額の両方で変化幅を表現
+- 時系列トレンド（5営業日、20営業日）の方向性を評価
+
+■ **銅トレーディング戦略分析**
+- **カレンダースプレッド戦略**: 
+  * 1M-3M, 3M-6M スプレッドの現在値と推奨ポジション
+  * 期間構造の傾き変化（バックワーデーション深化/緩和）の意味
+  * ロールオーバー圧力とタイミング戦略
+  * 金利コスト vs 在庫コストの相対的優位性評価
+
+- **地域間スプレッド戦略**:
+  * LME-上海 価格差（+12%超）の持続性と収束シナリオ
+  * LME-CME スプレッドトレードの機会評価  
+  * 為替ヘッジコストを考慮した裁定取引実現可能性
+  * 物流・在庫移転コストとスプレッド幅の関係
+
+- **アウトライト戦略**:
+  * 技術的レベル: 直近高値/安値、移動平均からの乖離度
+  * ファンド玉動向: ロング/ショート比率変化の意味
+  * 在庫トリガー: キャンセルワラント比率の閾値
+  * マクロ要因: USD/金利/株式市場との感応度
+
+■ **リスク管理・ポジション管理**
+- 各戦略の想定リスク/リターン比率
+- ストップロス設定水準の根拠
+- ポジションサイズ決定要因（流動性/ボラティリティ）
+- 複数戦略組み合わせ時の相関リスク
+
+■ **市場構造分析**
+- 期間構造変化の背景（需給/金利/季節性）
+- ファンドポジション変化とプライスアクション
+- 在庫動向（LME/上海/SMM）の統合分析
+- 上海プレミアム3指標の乖離/収束パターン
+
+■ **マクロ環境統合**
+- 中国PMI/工業生産とベースメタル需要
+- USD指数/米金利とドル建てコモディティ
+- VIX/リスクセンチメントと銅価格感応度
+- 地政学的リスク（中東/ウクライナ）の金属市場影響
+
+■ **ニュース分析・市場解説**
+- **主要ニュースの詳細解説**: 各ニュースの背景・内容・意味を分かりやすく説明
+- **市場影響度評価**: ニュースが価格・在庫・需給に与える具体的影響を定量化
+- **ニュース間の関連性**: 複数ニュースの相互作用と総合的市場インパクト
+- **信頼性・重要度分析**: ソース・タイミング・内容の信憑性評価
+- **トレーディング示唆**: 各ニュースに基づく具体的な取引戦略・タイミング
+- **中国関連ニュース特別解説**: 中国経済指標・政策の金属市場への波及メカニズム
+
+■ **今後の注目ポイント**
+- 短期（1-5営業日）の重要イベント・指標
+- 中期（1-3ヶ月）の構造的変化要因
+- 長期（3-12ヶ月）のメガトレンド
+- 各時間軸での推奨戦略と見直し条件
 """
         
         return content
@@ -2942,13 +3662,54 @@ class LMEReportGenerator:
             
         lines = []
         
-        # LME在庫
+        # LME在庫（ワラント詳細付き）
         if inventory_data.get('lme'):
-            lines.append("【LME在庫】")
+            lines.append("【LME在庫（ワラント詳細）】")
             for metal, data in inventory_data['lme'].items():
                 if data:
+                    # 総在庫表示
                     stock_value = data.get('total_stock', 'N/A')
-                    lines.append(f"  {metal}: {stock_value} トン")
+                    lines.append(f"  {metal}:")
+                    
+                    # ワラント詳細表示
+                    on_warrant = data.get('on_warrant')
+                    cancelled_warrant = data.get('cancelled_warrant')
+                    cancel_ratio = data.get('cancel_ratio')
+                    
+                    if on_warrant is not None and cancelled_warrant is not None:
+                        # 詳細ワラント情報が利用可能
+                        total_calc = on_warrant + cancelled_warrant
+                        lines.append(f"    総在庫: {total_calc:,.0f}トン")
+                        lines.append(f"      オンワラント: {on_warrant:,.0f}トン ({(on_warrant/total_calc)*100:.1f}%)")
+                        lines.append(f"      キャンセルワラント: {cancelled_warrant:,.0f}トン ({(cancelled_warrant/total_calc)*100:.1f}%)")
+                        
+                        # キャンセル比率に基づく市場含意
+                        if cancel_ratio is not None and not pd.isna(cancel_ratio):
+                            lines.append(f"      キャンセル比率: {cancel_ratio:.1f}%")
+                            
+                            if cancel_ratio > 20:
+                                lines.append(f"        → 極めて高いキャンセル率（バックワーデーション圧力強）")
+                            elif cancel_ratio > 10:
+                                lines.append(f"        → 高いキャンセル率（現物需要堅調）")
+                            elif cancel_ratio > 5:
+                                lines.append(f"        → 中程度キャンセル率（中立的市場）")
+                            else:
+                                lines.append(f"        → 低いキャンセル率（供給過剰気味）")
+                        
+                        # Delivered In/Out情報
+                        delivered_in = data.get('delivered_in')
+                        delivered_out = data.get('delivered_out')
+                        if delivered_in is not None and not pd.isna(delivered_in):
+                            lines.append(f"      搬入量: {delivered_in:,.0f}トン")
+                        if delivered_out is not None and not pd.isna(delivered_out):
+                            lines.append(f"      搬出量: {delivered_out:,.0f}トン")
+                            
+                    else:
+                        # 従来形式（詳細不明）
+                        if stock_value != 'N/A':
+                            lines.append(f"    総在庫: {stock_value}トン")
+                        else:
+                            lines.append(f"    総在庫: データ取得失敗")
                     
                     # トレンド情報
                     trend = data.get('trend', {})
@@ -2956,7 +3717,9 @@ class LMEReportGenerator:
                         trend_dir = trend.get('trend_direction')
                         period_change = trend.get('period_change')
                         if trend_dir and period_change is not None:
-                            lines.append(f"    (5営業日: {trend_dir} {period_change:+.0f}トン)")
+                            lines.append(f"    (5営業日トレンド: {trend_dir} {period_change:+.0f}トン)")
+                    
+                    lines.append("")  # 金属間の空行
             lines.append("")
             
         # COMEX在庫
@@ -2984,6 +3747,205 @@ class LMEReportGenerator:
             lines.append("")
             
         return "\n".join(lines)
+    
+    def _format_fund_position_data(self, fund_position_data: Dict) -> str:
+        """投資ファンドポジションデータフォーマット"""
+        if not fund_position_data:
+            return "投資ファンドポジションデータ取得エラー"
+            
+        lines = []
+        lines.append("【LME投資ファンドポジション】")
+        
+        for metal, data in fund_position_data.items():
+            if data and isinstance(data, dict):
+                lines.append(f"  {metal.capitalize()}:")
+                
+                long_pos = data.get('long_position')
+                short_pos = data.get('short_position')
+                net_pos = data.get('net_position')
+                sentiment = data.get('sentiment', 'N/A')
+                last_updated = data.get('last_updated', 'N/A')
+                
+                if long_pos is not None:
+                    lines.append(f"    ロング: {long_pos:,.0f} 契約")
+                if short_pos is not None:
+                    lines.append(f"    ショート: {short_pos:,.0f} 契約")
+                if net_pos is not None:
+                    net_sign = "+" if net_pos >= 0 else ""
+                    lines.append(f"    ネット: {net_sign}{net_pos:,.0f} 契約 ({sentiment})")
+                    
+                    # 市場含意
+                    if abs(net_pos) > 10000:
+                        if net_pos > 0:
+                            implication = "大規模ネットロング → 強い上昇圧力"
+                        else:
+                            implication = "大規模ネットショート → 強い下落圧力"
+                    elif abs(net_pos) > 5000:
+                        if net_pos > 0:
+                            implication = "中規模ネットロング → 上昇傾向"
+                        else:
+                            implication = "中規模ネットショート → 下落傾向"
+                    else:
+                        implication = "中立的ポジション → トレンドレス"
+                    
+                    lines.append(f"    市場含意: {implication}")
+                
+                lines.append(f"    更新: {last_updated}")
+                lines.append("")
+        
+        if not any(fund_position_data.values()):
+            lines.append("  ファンドポジションデータなし")
+            lines.append("")
+            
+        return "\n".join(lines)
+    
+    def _format_shanghai_copper_premium_data(self, premium_data: Dict) -> str:
+        """上海銅プレミアムデータフォーマット"""
+        if not premium_data:
+            return "上海銅プレミアムデータ取得エラー"
+            
+        lines = []
+        lines.append("【上海銅プレミアム（中国現物市場）】")
+        
+        # ランキング順にソート
+        sorted_premiums = sorted(
+            premium_data.items(), 
+            key=lambda x: x[1].get('ranking', 999)
+        )
+        
+        for premium_type, data in sorted_premiums:
+            if data and isinstance(data, dict):
+                name = data.get('name', premium_type)
+                description = data.get('description', '')
+                source = data.get('source', '')
+                ranking = data.get('ranking', 0)
+                premium_value = data.get('premium_value')
+                price_range = data.get('price_range', {})
+                trend_info = data.get('trend_info')
+                last_updated = data.get('last_updated', 'N/A')
+                
+                lines.append(f"  {ranking}位. {name}:")
+                lines.append(f"    説明: {description}")
+                lines.append(f"    出典: {source}")
+                
+                if premium_value is not None:
+                    lines.append(f"    現在価格: {premium_value:.2f} USD/MT")
+                    
+                    # 価格レンジ情報
+                    range_parts = []
+                    if price_range.get('high') is not None:
+                        range_parts.append(f"高値: {price_range['high']:.2f}")
+                    if price_range.get('low') is not None:
+                        range_parts.append(f"安値: {price_range['low']:.2f}")
+                    if price_range.get('close') is not None:
+                        range_parts.append(f"終値: {price_range['close']:.2f}")
+                    
+                    if range_parts:
+                        lines.append(f"    日中レンジ: {', '.join(range_parts)}")
+                    
+                    # トレンド分析
+                    if trend_info:
+                        trend_direction = trend_info.get('trend_direction', 'N/A')
+                        trend_change = trend_info.get('trend_change', 0)
+                        avg_7d = trend_info.get('avg_7d')
+                        std_7d = trend_info.get('std_7d')
+                        data_points = trend_info.get('data_points', 0)
+                        
+                        if avg_7d is not None:
+                            lines.append(f"    7日平均: {avg_7d:.2f} USD/MT")
+                        if std_7d is not None:
+                            cv = (std_7d / avg_7d) * 100 if avg_7d > 0 else 0
+                            stability = "安定" if cv < 20 else "変動大" if cv < 35 else "高変動"
+                            lines.append(f"    変動性: {stability} (標準偏差: {std_7d:.2f})")
+                        
+                        lines.append(f"    7日トレンド: {trend_direction}")
+                        if abs(trend_change) > 1:
+                            lines.append(f"    変化幅: {trend_change:+.2f} USD/MT")
+                    
+                    # 市場含意分析
+                    market_implication = self._analyze_premium_implication(
+                        premium_value, name, trend_info
+                    )
+                    if market_implication:
+                        lines.append(f"    市場含意: {market_implication}")
+                        
+                else:
+                    lines.append(f"    現在価格: データ取得失敗")
+                
+                lines.append(f"    最終更新: {last_updated}")
+                lines.append("")
+        
+        # 総合分析
+        if len(sorted_premiums) >= 2:
+            lines.append("  プレミアム分析:")
+            
+            # 有効なプレミアム値を取得
+            valid_premiums = []
+            for _, data in sorted_premiums:
+                if data.get('premium_value') is not None:
+                    valid_premiums.append((data['name'], data['premium_value']))
+            
+            if len(valid_premiums) >= 2:
+                # 最高値と最低値
+                max_premium = max(valid_premiums, key=lambda x: x[1])
+                min_premium = min(valid_premiums, key=lambda x: x[1])
+                spread = max_premium[1] - min_premium[1]
+                
+                lines.append(f"    最高プレミアム: {max_premium[0]} ({max_premium[1]:.2f} USD/MT)")
+                lines.append(f"    最低プレミアム: {min_premium[0]} ({min_premium[1]:.2f} USD/MT)")
+                lines.append(f"    プレミアムスプレッド: {spread:.2f} USD/MT")
+                
+                # スプレッド分析
+                if spread > 30:
+                    spread_analysis = "大きなスプレッド → 市場分断・流動性低下"
+                elif spread > 15:
+                    spread_analysis = "中程度スプレッド → 市場機能は正常"
+                else:
+                    spread_analysis = "小さなスプレッド → 市場統合・流動性良好"
+                
+                lines.append(f"    スプレッド分析: {spread_analysis}")
+                lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _analyze_premium_implication(self, premium_value: float, name: str, trend_info: dict) -> str:
+        """プレミアム値の市場含意分析"""
+        if premium_value is None:
+            return ""
+        
+        implications = []
+        
+        # 絶対値レベル分析
+        if premium_value > 80:
+            implications.append("高プレミアム（現物タイト）")
+        elif premium_value > 50:
+            implications.append("中程度プレミアム（需給バランス）")
+        elif premium_value > 20:
+            implications.append("低プレミアム（供給充足）")
+        else:
+            implications.append("極低プレミアム（供給過剰）")
+        
+        # トレンド分析
+        if trend_info:
+            trend_direction = trend_info.get('trend_direction', '')
+            trend_change = trend_info.get('trend_change', 0)
+            
+            if trend_direction == "上昇" and abs(trend_change) > 5:
+                implications.append("プレミアム上昇中（需要増加・供給逼迫）")
+            elif trend_direction == "下降" and abs(trend_change) > 5:
+                implications.append("プレミアム下降中（需要減退・供給増加）")
+            elif trend_direction == "横ばい":
+                implications.append("プレミアム安定（需給均衡）")
+        
+        # プレミアムタイプ別の特殊分析
+        if "Yangshan" in name and premium_value > 60:
+            implications.append("輸入港逼迫（物流ボトルネック）")
+        elif "CIF" in name and premium_value > 70:
+            implications.append("輸入コスト高（海運費・保険料上昇）")
+        elif "保税倉庫" in name and premium_value < 30:
+            implications.append("保税在庫充足（倉庫費圧迫）")
+        
+        return "、".join(implications) if implications else ""
         
     def _format_volume_data(self, volume_data: Dict) -> str:
         """取引量データフォーマット"""
@@ -3363,7 +4325,20 @@ class LMEReportGenerator:
         # 日時とソース情報
         info_parts = []
         if date:
-            info_parts.append(f"{date[:16]}")
+            # UTC時刻をJST（日本時間）に変換
+            try:
+                from datetime import datetime, timedelta
+                import pandas as pd
+                
+                # pandasのto_datetimeを使用してより安全に変換
+                utc_time = pd.to_datetime(date, utc=True)
+                # UTC+9時間でJSTに変換
+                jst_time = utc_time + timedelta(hours=9)
+                formatted_date = jst_time.strftime('%Y-%m-%d %H:%M')
+                info_parts.append(formatted_date)
+            except Exception as e:
+                # エラーの場合は元の形式
+                info_parts.append(f"{date[:16]}")
         if source and source != 'SYSTEM_GENERATED':
             info_parts.append(f"出典: {source}")
         if category and category.strip():
@@ -3418,6 +4393,170 @@ class LMEReportGenerator:
         lines.append("")  # 空行追加
         
         return lines
+    
+    def _format_exchange_curves_data(self, exchange_curves_data: Dict) -> str:
+        """取引所間カーブ比較データフォーマット"""
+        if not exchange_curves_data:
+            return "取引所間カーブ比較データ取得エラー"
+            
+        lines = []
+        
+        # 取引所別カーブデータ表示
+        exchanges = [k for k in exchange_curves_data.keys() if k != 'cross_exchange_analysis']
+        if not exchanges:
+            return "取引所カーブデータがありません"
+        
+        lines.append("【銅先物 - 取引所別価格カーブ】")
+        
+        for exchange_code in exchanges:
+            exchange_info = exchange_curves_data[exchange_code]
+            exchange_name = exchange_info.get('exchange_name', exchange_code)
+            currency = exchange_info.get('currency', 'USD')
+            contracts = exchange_info.get('contracts', {})
+            structure_analysis = exchange_info.get('structure_analysis', {})
+            successful_contracts = exchange_info.get('successful_contracts', 0)
+            
+            lines.append(f"\n【{exchange_name}】")
+            lines.append(f"  基準通貨: {currency}")
+            lines.append(f"  取得済み契約: {successful_contracts}件")
+            
+            if not contracts:
+                lines.append("  → データ取得失敗")
+                continue
+            
+            # 契約を満期順にソート
+            sorted_contracts = sorted(
+                contracts.items(),
+                key=lambda x: x[1]['maturity_months']
+            )
+            
+            lines.append("  【契約別価格】")
+            for contract_key, contract_info in sorted_contracts[:6]:  # 最初の6契約のみ表示
+                name = contract_info.get('name', contract_key)
+                price_original = contract_info.get('price_original')
+                price_usd = contract_info.get('price_usd')
+                maturity_months = contract_info.get('maturity_months', 0)
+                volume = contract_info.get('volume', 0)
+                liquidity_tier = contract_info.get('liquidity_tier', 'unknown')
+                
+                if price_original is not None and price_usd is not None:
+                    if currency != "USD":
+                        lines.append(f"    第{maturity_months}ヶ月: {name}")
+                        lines.append(f"      価格: {price_original:,.0f} {currency} → ${price_usd:,.2f}/MT")
+                    else:
+                        lines.append(f"    第{maturity_months}ヶ月: {name}")
+                        lines.append(f"      価格: ${price_usd:,.2f}/MT")
+                    
+                    if volume > 0:
+                        lines.append(f"      出来高: {volume:,.0f} 契約 ({liquidity_tier}流動性)")
+                    else:
+                        lines.append(f"      出来高: データなし")
+            
+            # 期間構造分析
+            if structure_analysis:
+                lines.append("  【期間構造分析】")
+                structure_type = structure_analysis.get('structure_type', 'unknown')
+                slope = structure_analysis.get('slope', 0)
+                front_back_spread = structure_analysis.get('front_back_spread', 0)
+                liquidity_concentration = structure_analysis.get('liquidity_concentration', 'unknown')
+                
+                lines.append(f"    構造タイプ: {structure_type}")
+                if slope != 0:
+                    lines.append(f"    月間スロープ: {slope:+.2f} USD/MT/月")
+                if front_back_spread != 0:
+                    lines.append(f"    フロント-バック差: {front_back_spread:+.2f} USD/MT")
+                lines.append(f"    流動性分布: {liquidity_concentration}")
+                
+                # 市場含意の説明
+                if structure_type == 'コンタンゴ':
+                    lines.append("    → 保管コスト反映、供給充足を示唆")
+                elif structure_type == 'バックワーデーション':
+                    lines.append("    → 現物需要逼迫、在庫不足を示唆")
+                elif structure_type == 'フラット':
+                    lines.append("    → 需給均衡、中立的市場状況")
+        
+        # 取引所間比較分析
+        cross_analysis = exchange_curves_data.get('cross_exchange_analysis', {})
+        if cross_analysis:
+            lines.append(f"\n【取引所間比較分析】")
+            
+            # 価格差分析
+            price_diffs = cross_analysis.get('price_differentials', {})
+            if price_diffs:
+                lines.append("  【3ヶ月先物価格差】")
+                for pair_key, diff_info in price_diffs.items():
+                    ex1_name = diff_info.get('ex1_name', '')
+                    ex2_name = diff_info.get('ex2_name', '')
+                    price_diff = diff_info.get('price_diff_usd', 0)
+                    diff_percent = diff_info.get('diff_percent', 0)
+                    ex1_price = diff_info.get('ex1_price', 0)
+                    ex2_price = diff_info.get('ex2_price', 0)
+                    
+                    lines.append(f"    {ex1_name} vs {ex2_name}:")
+                    lines.append(f"      {ex1_name}: ${ex1_price:,.2f}/MT")
+                    lines.append(f"      {ex2_name}: ${ex2_price:,.2f}/MT")
+                    lines.append(f"      価格差: {price_diff:+,.2f} USD/MT ({diff_percent:+.2f}%)")
+                    
+                    # 価格差の解釈
+                    if abs(diff_percent) < 1:
+                        lines.append("      → 価格収束、裁定機会なし")
+                    elif diff_percent > 5:
+                        lines.append(f"      → {ex2_name}大幅プレミアム、輸入インセンティブ")
+                    elif diff_percent > 2:
+                        lines.append(f"      → {ex2_name}プレミアム、価格差に注意")
+                    elif diff_percent < -5:
+                        lines.append(f"      → {ex1_name}大幅プレミアム、輸出インセンティブ")
+                    elif diff_percent < -2:
+                        lines.append(f"      → {ex1_name}プレミアム、価格差に注意")
+            
+            # 期間構造比較
+            structure_comp = cross_analysis.get('structure_comparison', {})
+            if structure_comp:
+                lines.append("  【期間構造比較】")
+                for pair_key, comp_info in structure_comp.items():
+                    ex1_structure = comp_info.get('ex1_structure', 'unknown')
+                    ex2_structure = comp_info.get('ex2_structure', 'unknown')
+                    convergence = comp_info.get('convergence', False)
+                    
+                    lines.append(f"    {pair_key.replace('_vs_', ' vs ')}:")
+                    lines.append(f"      構造: {ex1_structure} vs {ex2_structure}")
+                    if convergence:
+                        lines.append("      → 両市場の期間構造が一致、効率的な裁定")
+                    else:
+                        lines.append("      → 期間構造の相違、市場間の価格発見メカニズムに違い")
+            
+            # 裁定機会
+            arbitrage_opportunities = cross_analysis.get('arbitrage_opportunities', [])
+            if arbitrage_opportunities:
+                lines.append("  【裁定機会】")
+                for opp in arbitrage_opportunities:
+                    pair = opp.get('pair', '')
+                    buy_exchange = opp.get('buy_exchange', '')
+                    sell_exchange = opp.get('sell_exchange', '')
+                    profit_potential = opp.get('profit_potential', 0)
+                    profit_percent = opp.get('profit_percent', 0)
+                    
+                    lines.append(f"    {pair.replace('_vs_', ' vs ')}:")
+                    lines.append(f"      戦略: {buy_exchange}で買い、{sell_exchange}で売り")
+                    lines.append(f"      理論利益: ${profit_potential:,.2f}/MT ({profit_percent:.2f}%)")
+                    lines.append("      ※ 実際の取引では為替リスク、流動性、取引コストを考慮要")
+            
+            # 流動性比較
+            liquidity_comp = cross_analysis.get('liquidity_comparison', {})
+            if liquidity_comp:
+                lines.append("  【流動性比較】")
+                for pair_key, liq_info in liquidity_comp.items():
+                    ex1_volume = liq_info.get('ex1_volume', 0)
+                    ex2_volume = liq_info.get('ex2_volume', 0)
+                    volume_ratio = liq_info.get('volume_ratio', 0)
+                    
+                    lines.append(f"    {pair_key.replace('_vs_', ' vs ')}:")
+                    lines.append(f"      出来高比較: {ex1_volume:,.0f} vs {ex2_volume:,.0f} 契約")
+                    if volume_ratio > 0:
+                        lines.append(f"      出来高比率: {volume_ratio:.2f}倍")
+        
+        lines.append("")
+        return "\n".join(lines)
         
     def run(self):
         """メイン実行処理"""
@@ -3428,8 +4567,11 @@ class LMEReportGenerator:
             data = {
                 'prices': self.get_price_data(),
                 'inventory': self.get_inventory_data(),
+                'fund_positions': self.get_fund_position_data(),
+                'shanghai_copper_premiums': self.get_shanghai_copper_premium_data(),
                 'volume': self.get_volume_data(),
                 'forward_curves': self.get_forward_curve_data(),
+                'exchange_curves': self.get_exchange_curves_data(),
                 'macro': self.get_macro_data(),
                 'equity': self.get_equity_data(),
                 'risk_sentiment': self.get_risk_sentiment_data(),

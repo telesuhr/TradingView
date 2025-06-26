@@ -90,6 +90,272 @@
     "Zinc": "SMM-ZIN-BON"
   },
   
+  "fund_position_rics": {
+    "Copper": {
+      "long_ric": "LME-INFUL-CA",
+      "short_ric": "LME-INFUS-CA"
+    },
+    "Aluminium": {
+      "long_ric": "LME-INFUL-AH",
+      "short_ric": "LME-INFUS-AH"
+    },
+    "Zinc": {
+      "long_ric": "LME-INFUL-ZS",
+      "short_ric": "LME-INFUS-ZS"
+    },
+    "Lead": {
+      "long_ric": "LME-INFUL-PB",
+      "short_ric": "LME-INFUS-PB"
+    },
+    "Nickel": {
+      "long_ric": "LME-INFUL-NI",
+      "short_ric": "LME-INFUS-NI"
+    },
+    "Tin": {
+      "long_ric": "LME-INFUL-SN",
+      "short_ric": "LME-INFUS-SN"
+    }
+  },
+  
+  "shanghai_copper_premium_rics": {
+    "yangshan_port": {
+      "ric": "SMM-CUYP-CN",
+      "name": "SMM Yangshan港プレミアム",
+      "description": "中国輸入港（洋山港）実際取引プレミアム",
+      "source": "Shanghai Metals Market",
+      "market_focus": "実取引ベース",
+      "ranking": 1
+    },
+    "shmet_cif": {
+      "ric": "CU-BPCIF-SHMET",
+      "name": "SHMET CIFプレミアム", 
+      "description": "上海金属交易所CIF（運賃保険込み）プレミアム",
+      "source": "Shanghai Metal Exchange",
+      "market_focus": "交易所公式価格",
+      "ranking": 2
+    },
+    "bonded_warehouse": {
+      "ric": "CU-BMPBW-SHMET",
+      "name": "SHMET保税倉庫プレミアム",
+      "description": "保税倉庫在庫の現物プレミアム",
+      "source": "Shanghai Metal Exchange", 
+      "market_focus": "在庫連動型",
+      "ranking": 3
+    }
+  },
+  
+  "exchange_curves": {
+    "copper": {
+      "lme": {
+        "exchange_name": "London Metal Exchange",
+        "currency": "USD",
+        "unit": "MT",
+        "note": "MCU+月コード+年パターン使用（実行日に応じて自動生成）",
+        "contracts": {
+          "1m": {
+            "ric": "MCU_DYNAMIC",
+            "name": "LME銅先物第1限月",
+            "maturity_months": 1,
+            "liquidity_tier": "medium"
+          },
+          "2m": {
+            "ric": "MCU_DYNAMIC",
+            "name": "LME銅先物第2限月",
+            "maturity_months": 2,
+            "liquidity_tier": "medium"
+          },
+          "3m": {
+            "ric": "MCU_DYNAMIC",
+            "name": "LME銅先物第3限月",
+            "maturity_months": 3,
+            "liquidity_tier": "medium"
+          },
+          "4m": {
+            "ric": "MCU_DYNAMIC",
+            "name": "LME銅先物第4限月",
+            "maturity_months": 4,
+            "liquidity_tier": "medium"
+          },
+          "5m": {
+            "ric": "MCU_DYNAMIC",
+            "name": "LME銅先物第5限月",
+            "maturity_months": 5,
+            "liquidity_tier": "medium"
+          },
+          "6m": {
+            "ric": "MCU_DYNAMIC",
+            "name": "LME銅先物第6限月",
+            "maturity_months": 6,
+            "liquidity_tier": "medium"
+          }
+        }
+      },
+      "shfe": {
+        "exchange_name": "Shanghai Futures Exchange",
+        "currency": "CNY",
+        "unit": "MT",
+        "contracts": {
+          "1m": {
+            "ric": "SCFc1",
+            "name": "上海銅先物第1限月",
+            "maturity_months": 1,
+            "liquidity_tier": "high"
+          },
+          "2m": {
+            "ric": "SCFc2", 
+            "name": "上海銅先物第2限月",
+            "maturity_months": 2,
+            "liquidity_tier": "high"
+          },
+          "3m": {
+            "ric": "SCFc3",
+            "name": "上海銅先物第3限月",
+            "maturity_months": 3,
+            "liquidity_tier": "high"
+          },
+          "4m": {
+            "ric": "SCFc4",
+            "name": "上海銅先物第4限月",
+            "maturity_months": 4,
+            "liquidity_tier": "medium"
+          },
+          "5m": {
+            "ric": "SCFc5",
+            "name": "上海銅先物第5限月",
+            "maturity_months": 5,
+            "liquidity_tier": "medium"
+          },
+          "6m": {
+            "ric": "SCFc6",
+            "name": "上海銅先物第6限月",
+            "maturity_months": 6,
+            "liquidity_tier": "medium"
+          },
+          "7m": {
+            "ric": "SCFc7",
+            "name": "上海銅先物第7限月",
+            "maturity_months": 7,
+            "liquidity_tier": "medium"
+          },
+          "8m": {
+            "ric": "SCFc8",
+            "name": "上海銅先物第8限月",
+            "maturity_months": 8,
+            "liquidity_tier": "low"
+          },
+          "9m": {
+            "ric": "SCFc9",
+            "name": "上海銅先物第9限月",
+            "maturity_months": 9,
+            "liquidity_tier": "medium"
+          },
+          "10m": {
+            "ric": "SCFc10",
+            "name": "上海銅先物第10限月",
+            "maturity_months": 10,
+            "liquidity_tier": "low"
+          },
+          "11m": {
+            "ric": "SCFc11",
+            "name": "上海銅先物第11限月",
+            "maturity_months": 11,
+            "liquidity_tier": "low"
+          },
+          "12m": {
+            "ric": "SCFc12",
+            "name": "上海銅先物第12限月",
+            "maturity_months": 12,
+            "liquidity_tier": "low"
+          }
+        }
+      },
+      "cme": {
+        "exchange_name": "Chicago Mercantile Exchange (COMEX)",
+        "currency": "USD", 
+        "unit": "LB",
+        "price_conversion": {
+          "from_unit": "cents_per_lb",
+          "to_unit": "usd_per_mt",
+          "conversion_factor": 2204.62
+        },
+        "contracts": {
+          "1m": {
+            "ric": "HGc1",
+            "name": "CME銅先物第1限月",
+            "maturity_months": 1,
+            "liquidity_tier": "low"
+          },
+          "2m": {
+            "ric": "HGc2", 
+            "name": "CME銅先物第2限月",
+            "maturity_months": 2,
+            "liquidity_tier": "high"
+          },
+          "3m": {
+            "ric": "HGc3",
+            "name": "CME銅先物第3限月", 
+            "maturity_months": 3,
+            "liquidity_tier": "medium"
+          },
+          "4m": {
+            "ric": "HGc4",
+            "name": "CME銅先物第4限月",
+            "maturity_months": 4,
+            "liquidity_tier": "high"
+          },
+          "5m": {
+            "ric": "HGc5",
+            "name": "CME銅先物第5限月",
+            "maturity_months": 5,
+            "liquidity_tier": "low"
+          },
+          "6m": {
+            "ric": "HGc6",
+            "name": "CME銅先物第6限月",
+            "maturity_months": 6,
+            "liquidity_tier": "low"
+          },
+          "7m": {
+            "ric": "HGc7",
+            "name": "CME銅先物第7限月",
+            "maturity_months": 7,
+            "liquidity_tier": "medium"
+          },
+          "8m": {
+            "ric": "HGc8",
+            "name": "CME銅先物第8限月",
+            "maturity_months": 8,
+            "liquidity_tier": "low"
+          },
+          "9m": {
+            "ric": "HGc9",
+            "name": "CME銅先物第9限月",
+            "maturity_months": 9,
+            "liquidity_tier": "low"
+          },
+          "10m": {
+            "ric": "HGc10",
+            "name": "CME銅先物第10限月",
+            "maturity_months": 10,
+            "liquidity_tier": "medium"
+          },
+          "11m": {
+            "ric": "HGc11",
+            "name": "CME銅先物第11限月",
+            "maturity_months": 11,
+            "liquidity_tier": "low"
+          },
+          "12m": {
+            "ric": "HGc12",
+            "name": "CME銅先物第12限月",
+            "maturity_months": 12,
+            "liquidity_tier": "low"
+          }
+        }
+      }
+    }
+  },
+  
   "macro_rics": {
     "USD_INDEX": ".DXY",
     "US_10Y_YIELD": "TNX",
