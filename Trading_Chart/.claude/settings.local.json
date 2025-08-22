@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(python:*)",
+      "Bash(/c/Python313/python:*)",
+      "Bash(ls:*)",
+      "Bash(pip install:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}
