@@ -3,6 +3,15 @@ REM ================================================================
 REM LME Daily Report Generator - Windows Batch Script
 REM Author: Claude Code
 REM Created: 2025-06-10
+REM Updated: 2025-09-09 - Added output path parameter support
+REM ================================================================
+REM
+REM Usage: 
+REM   run_report.bat                                  (default: output folder)
+REM   run_report.bat "C:\path\to\output.txt"          (specific file)
+REM   run_report.bat "C:\path\to\directory"           (specific directory)
+REM
+REM Note: Use double quotes if path contains spaces
 REM ================================================================
 
 echo ========================================
@@ -10,6 +19,12 @@ echo LME Daily Report Generator
 echo ========================================
 echo Start Time: %date% %time%
 echo.
+
+REM 引数チェック（出力先パスの処理）
+set OUTPUT_PATH=%~1
+if not "%OUTPUT_PATH%"=="" (
+    echo [INFO] Output path specified: %OUTPUT_PATH%
+)
 
 REM 現在のディレクトリを保存
 set SCRIPT_DIR=%~dp0
@@ -64,7 +79,11 @@ if errorlevel 1 (
 
 REM メインスクリプトの実行
 echo [INFO] Running LME Daily Report Generator...
-python lme_daily_report.py
+if "%OUTPUT_PATH%"=="" (
+    python lme_daily_report.py
+) else (
+    python lme_daily_report.py -o "%OUTPUT_PATH%"
+)
 set RESULT=%errorlevel%
 
 REM 仮想環境の非アクティブ化
