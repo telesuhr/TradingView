@@ -20,8 +20,28 @@ run_report.bat
 python lme_daily_report.py
 ```
 
+### Output Path Specification (New Feature - 2025-09-09)
+```bash
+# Default output (output/LME_Daily_Report_Input_YYYYMMDD.txt)
+python lme_daily_report.py
+run_report.bat
+
+# Specify output file
+python lme_daily_report.py -o /path/to/output.txt
+run_report.bat "C:\path\to\output.txt"
+
+# Specify output directory (auto-generated filename)
+python lme_daily_report.py -o /path/to/directory/
+run_report.bat "C:\path\to\directory"
+
+# Path with spaces (use quotes)
+python lme_daily_report.py -o "/path with spaces/output.txt"
+run_report.bat "\\server\Shared Documents\folder\output"
+```
+
 ### Output
-- **Report File**: `output/LME_Daily_Report_Input_YYYYMMDD.txt`
+- **Default Report File**: `output/LME_Daily_Report_Input_YYYYMMDD.txt`
+- **Custom Path**: User-specified location via `-o` parameter
 - **Log File**: `logs/lme_report_YYYYMMDD.log`
 
 ## 🔧 Core Features
@@ -165,6 +185,10 @@ This project is designed for professional trading and institutional use.
 
 ---
 
-**Last Updated**: 2025-06-26  
-**Version**: 2.0 (Major Features Complete)  
-**Compatibility**: LME/SHFE/CME Multi-Exchange Integration
+**Last Updated**: 2025-09-09  
+**Version**: 2.1 (Output Path Specification Added)  
+**Compatibility**: LME/SHFE/CME Multi-Exchange Integration  
+
+### Recent Updates
+- **2025-09-09**: Added output path specification via `-o` parameter for both Python script and batch file
+- **2025-06-26**: Major features complete with multi-exchange integration
