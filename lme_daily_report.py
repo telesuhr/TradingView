@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import warnings
 import time
+import argparse
 warnings.filterwarnings('ignore')
 
 class LMEReportGenerator:
@@ -3429,8 +3430,13 @@ class LMEReportGenerator:
             'status': 'fallback_data'
         }
         
-    def generate_report_file(self, data: Dict) -> str:
-        """レポートファイル生成"""
+    def generate_report_file(self, data: Dict, output_path: Optional[str] = None) -> str:
+        """レポートファイル生成
+        
+        Args:
+            data: レポートデータ
+            output_path: 出力パス（指定しない場合はデフォルトのoutputディレクトリ）
+        """
         self.logger.info("レポートファイル生成開始")
         
         try:
@@ -3441,11 +3447,22 @@ class LMEReportGenerator:
             # レポート内容生成
             report_content = self._build_report_content(data)
             
-            # ファイル出力
-            output_dir = Path("output")
-            output_dir.mkdir(exist_ok=True)
+            # 出力パスの決定
+            if output_path:
+                # 指定されたパスを使用
+                output_path = Path(output_path)
+                if output_path.is_dir():
+                    # ディレクトリが指定された場合はファイル名を追加
+                    output_path = output_path / filename
+                # 親ディレクトリを作成
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                # デフォルトのoutputディレクトリを使用
+                output_dir = Path("output")
+                output_dir.mkdir(exist_ok=True)
+                output_path = output_dir / filename
             
-            output_path = output_dir / filename
+            # ファイル出力
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(report_content)
                 
@@ -4558,8 +4575,12 @@ class LMEReportGenerator:
         lines.append("")
         return "\n".join(lines)
         
-    def run(self):
-        """メイン実行処理"""
+    def run(self, output_path: Optional[str] = None):
+        """メイン実行処理
+        
+        Args:
+            output_path: 出力パス（指定しない場合はデフォルトのoutputディレクトリ）
+        """
         self.logger.info("LME日次レポート生成開始")
         
         try:
@@ -4579,7 +4600,7 @@ class LMEReportGenerator:
             }
             
             # レポートファイル生成
-            output_file = self.generate_report_file(data)
+            output_file = self.generate_report_file(data, output_path)
             
             self.logger.info(f"LME日次レポート生成完了: {output_file}")
             print(f"レポートファイルが生成されました: {output_file}")
@@ -4593,12 +4614,29 @@ class LMEReportGenerator:
 
 def main():
     """メイン関数"""
+    # コマンドライン引数の設定
+    parser = argparse.ArgumentParser(description='LME Daily Market Report Generator')
+    parser.add_argument(
+        '-o', '--output',
+        type=str,
+        help='出力ファイルパスまたはディレクトリ (例: /path/to/output.txt または /path/to/directory/)',
+        default=None
+    )
+    parser.add_argument(
+        '-c', '--config',
+        type=str,
+        help='設定ファイルパス (デフォルト: config.json)',
+        default='config.json'
+    )
+    
+    args = parser.parse_args()
+    
     try:
         # レポート生成器作成
-        generator = LMEReportGenerator()
+        generator = LMEReportGenerator(config_path=args.config)
         
         # レポート実行
-        output_file = generator.run()
+        output_file = generator.run(output_path=args.output)
         
         print(f"\n=== 実行完了 ===")
         print(f"出力ファイル: {output_file}")
